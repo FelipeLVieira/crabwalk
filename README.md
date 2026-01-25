@@ -25,6 +25,8 @@ Requires clawdbot gateway running on `ws://127.0.0.1:18789`.
 
 ## Config
 
+Token is in `~/.clawdbot/clawdbot.json`
+
 ```bash
 # Option 1: command line
 CLAWDBOT_API_TOKEN=your-token npm run dev
