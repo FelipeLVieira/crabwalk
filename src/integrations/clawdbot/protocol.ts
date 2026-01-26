@@ -147,11 +147,11 @@ export function createConnectParams(token?: string): ConnectParams {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: 'clawdbot-control-ui',
+      id: 'crabwalk-monitor',
       displayName: 'Crabwalk Monitor',
       version: '0.1.0',
-      platform: typeof window !== 'undefined' ? 'browser' : 'node',
-      mode: 'ui',
+      platform: 'node',
+      mode: 'bot',
     },
     auth: token ? { token } : undefined,
   }
