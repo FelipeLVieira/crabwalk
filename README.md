@@ -16,29 +16,36 @@ Watch your AI agents work across WhatsApp, Telegram, Discord, and Slack in a liv
 - **Action tracing** - Expand nodes to inspect tool args and payloads
 - **Session filtering** - Filter by platform, search by recipient
 
-## Getting Started
+## Installation
+
+### Docker (recommended)
 
 ```bash
+docker run -d \
+  -p 3000:3000 \
+  -e CLAWDBOT_API_TOKEN=your-token \
+  ghcr.io/luccast/crabwalk:latest
+```
+
+Or with docker-compose:
+
+```bash
+curl -O https://raw.githubusercontent.com/luccast/crabwalk/master/docker-compose.yml
+CLAWDBOT_API_TOKEN=your-token docker-compose up -d
+```
+
+### From source
+
+```bash
+git clone https://github.com/luccast/crabwalk.git
+cd crabwalk
 npm install
-npm run dev
-```
-
-Open `http://localhost:3000/monitor` (or `http://<server-ip>:3000/monitor` for remote access)
-
-Requires clawdbot gateway running on the same machine.
-
-## Config
-
-Token is in `~/.clawdbot/clawdbot.json`
-
-```bash
-# Option 1: command line
 CLAWDBOT_API_TOKEN=your-token npm run dev
-
-# Option 2: env file
-echo "CLAWDBOT_API_TOKEN=your-token" > .env.local
-npm run dev
 ```
+
+Open `http://localhost:3000/monitor`
+
+Requires clawdbot gateway running on the same machine. Token is in `~/.clawdbot/clawdbot.json`
 
 ## Stack
 

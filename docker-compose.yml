@@ -1,0 +1,8 @@
+services:
+  crabwalk:
+    image: ghcr.io/luccast/crabwalk:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - CLAWDBOT_API_TOKEN=${CLAWDBOT_API_TOKEN}
+    restart: unless-stopped
