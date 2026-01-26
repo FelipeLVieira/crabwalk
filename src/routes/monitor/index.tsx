@@ -97,17 +97,13 @@ function MonitorPage() {
 
   const loadSessions = async () => {
     try {
-      // Use longer time window - 60 minutes default, 24 hours for historical
       const result = await trpc.clawdbot.sessions.query(
         historicalMode ? { activeMinutes: 1440 } : { activeMinutes: 60 }
       )
-      console.log('[monitor] loadSessions result:', result.sessions?.length, result.error)
-      if (result.sessions && result.sessions.length > 0) {
+      if (result.sessions) {
         for (const session of result.sessions) {
-          console.log('[monitor] upserting session:', session.key)
           upsertSession(session)
         }
-        console.log('[monitor] Sessions upserted')
       }
     } catch (e) {
       console.error('Failed to load sessions:', e)

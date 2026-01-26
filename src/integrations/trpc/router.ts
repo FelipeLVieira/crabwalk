@@ -64,17 +64,14 @@ const clawdbotRouter = router({
     .query(async ({ input }) => {
       const client = getClawdbotClient()
       if (!client.connected) {
-        console.log('[trpc] sessions: not connected')
         return { sessions: [], error: 'Not connected' }
       }
       try {
         const sessions = await client.listSessions(input)
-        console.log('[trpc] sessions:', sessions.length, 'found')
         return {
           sessions: sessions.map(sessionInfoToMonitor),
         }
       } catch (error) {
-        console.log('[trpc] sessions error:', error)
         return {
           sessions: [],
           error: error instanceof Error ? error.message : 'Failed to list sessions',

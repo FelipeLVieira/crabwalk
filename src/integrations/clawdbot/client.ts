@@ -42,14 +42,11 @@ export class ClawdbotClient {
 
   async connect(): Promise<HelloOk> {
     if (this._connecting || this._connected) {
-      // Return a fake hello-ok if already connected/connecting
       return { type: 'hello-ok', protocol: 3 } as HelloOk
     }
     this._connecting = true
-    console.log('[clawdbot] Connecting to', this.url)
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        console.log('[clawdbot] Connection timeout')
         this._connecting = false
         this.ws?.close()
         reject(new Error('Connection timeout - is clawdbot gateway running?'))
@@ -58,24 +55,19 @@ export class ClawdbotClient {
       try {
         this.ws = new WebSocket(this.url)
       } catch (e) {
-        console.log('[clawdbot] Failed to create WebSocket:', e)
         clearTimeout(timeout)
         reject(new Error(`Failed to create WebSocket: ${e}`))
         return
       }
 
       this.ws.once('open', () => {
-        console.log('[clawdbot] WebSocket open, waiting for challenge...')
+        // WebSocket connected, waiting for challenge
       })
 
       this.ws.on('message', (data) => {
         try {
           const raw = data.toString()
           const msg = JSON.parse(raw)
-          // Only log non-tick events to reduce noise
-          if (msg.event !== 'tick' && msg.event !== 'health') {
-            console.log('[clawdbot] Received:', msg.type || 'unknown', msg.event || '')
-          }
 
           // Handle challenge-response auth
           if (msg.type === 'event' && msg.event === 'connect.challenge') {
@@ -92,13 +84,11 @@ export class ClawdbotClient {
       this.ws.on('error', (err) => {
         clearTimeout(timeout)
         this._connecting = false
-        console.error('[clawdbot] WebSocket error:', err)
         reject(err)
       })
 
-      this.ws.on('close', (code, reason) => {
+      this.ws.on('close', (code, _reason) => {
         clearTimeout(timeout)
-        console.log('[clawdbot] WebSocket closed:', code, reason?.toString())
         const wasConnected = this._connected
         this._connected = false
         this._connecting = false
@@ -111,17 +101,10 @@ export class ClawdbotClient {
   }
 
   private handleChallenge(_challenge: ChallengePayload) {
-    if (!this.token) {
-      console.error('[clawdbot] No token for challenge response')
+    if (!this.token || this.ws?.readyState !== WebSocket.OPEN) {
       return
     }
 
-    if (this.ws?.readyState !== WebSocket.OPEN) {
-      console.error('[clawdbot] WebSocket not open for challenge response')
-      return
-    }
-
-    // Local connection - try without device, just auth token
     const params = createConnectParams(this.token)
     const response: RequestFrame = {
       type: 'req',
@@ -130,7 +113,6 @@ export class ClawdbotClient {
       params,
     }
 
-    console.log('[clawdbot] Sending challenge response:', JSON.stringify(response).slice(0, 400))
     this.ws.send(JSON.stringify(response))
   }
 
@@ -154,7 +136,6 @@ export class ClawdbotClient {
             if (connectTimeout) clearTimeout(connectTimeout)
             this._connected = true
             this._connecting = false
-            console.log('[clawdbot] Connected successfully!')
             connectResolve?.(msg.payload as HelloOk)
           } else {
             this.handleResponse(msg)
@@ -235,12 +216,10 @@ export class ClawdbotClient {
   }
 
   async listSessions(params?: SessionsListParams): Promise<SessionInfo[]> {
-    console.log('[clawdbot] listSessions params:', params)
     const result = await this.request<{ sessions: SessionInfo[] }>(
       'sessions.list',
       params
     )
-    console.log('[clawdbot] listSessions result:', result?.sessions?.length ?? 0, 'sessions')
     return result.sessions ?? []
   }
 
@@ -263,7 +242,6 @@ let clientInstance: ClawdbotClient | null = null
 export function getClawdbotClient(): ClawdbotClient {
   if (!clientInstance) {
     const token = process.env.CLAWDBOT_API_TOKEN
-    console.log('[clawdbot] Creating client, token:', token ? `${token.slice(0, 8)}...` : 'NOT SET')
     clientInstance = new ClawdbotClient('ws://127.0.0.1:18789', token)
   }
   return clientInstance
