@@ -8,9 +8,8 @@ import {
   actionsCollection,
   upsertSession,
   addAction,
+  updateSessionStatus,
   clearCollections,
-  parseSessionKey,
-  type MonitorSession,
 } from '~/integrations/clawdbot'
 import {
   ActionGraph,
@@ -146,44 +145,10 @@ function MonitorPage() {
 
     const subscription = trpc.clawdbot.events.subscribe(undefined, {
       onData: (data) => {
-        if (data.type === 'session' && data.session) {
-          const key = data.session.key
-          if (key) {
-            // Create session if it doesn't exist
-            const existing = sessionsCollection.state.get(key)
-            if (!existing) {
-              const parsed = parseSessionKey(key)
-              const newSession: MonitorSession = {
-                key,
-                agentId: parsed.agentId,
-                platform: parsed.platform,
-                recipient: parsed.recipient,
-                isGroup: parsed.isGroup,
-                lastActivityAt: Date.now(),
-                status: data.session.status || 'active',
-              }
-              upsertSession(newSession)
-            } else if (data.session.status) {
-              upsertSession({ ...existing, status: data.session.status, lastActivityAt: Date.now() })
-            }
-          }
+        if (data.type === 'session' && data.session?.key && data.session.status) {
+          updateSessionStatus(data.session.key, data.session.status)
         }
         if (data.type === 'action' && data.action) {
-          // Ensure session exists for this action
-          const sessionKey = data.action.sessionKey
-          const existing = sessionsCollection.state.get(sessionKey)
-          if (!existing) {
-            const parsed = parseSessionKey(sessionKey)
-            upsertSession({
-              key: sessionKey,
-              agentId: parsed.agentId,
-              platform: parsed.platform,
-              recipient: parsed.recipient,
-              isGroup: parsed.isGroup,
-              lastActivityAt: Date.now(),
-              status: 'active',
-            })
-          }
           addAction(data.action)
         }
       },
