@@ -10,6 +10,9 @@ import {
   type MonitorAction,
 } from '~/integrations/clawdbot'
 
+// Server-side debug mode state
+let debugMode = false
+
 const t = initTRPC.create({
   transformer: superjson,
 })
@@ -51,6 +54,18 @@ const clawdbotRouter = router({
     return { connected: client.connected }
   }),
 
+  setDebugMode: publicProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(({ input }) => {
+      debugMode = input.enabled
+      console.log(`[clawdbot] debug mode ${debugMode ? 'enabled' : 'disabled'}`)
+      return { debugMode }
+    }),
+
+  getDebugMode: publicProcedure.query(() => {
+    return { debugMode }
+  }),
+
   sessions: publicProcedure
     .input(
       z
@@ -88,8 +103,16 @@ const clawdbotRouter = router({
       const client = getClawdbotClient()
 
       const unsubscribe = client.onEvent((event) => {
+        // Log raw event when debug mode is enabled
+        if (debugMode) {
+          console.log('\n[DEBUG] Raw event:', JSON.stringify(event, null, 2))
+        }
+
         const parsed = parseEventFrame(event)
         if (parsed) {
+          if (debugMode && parsed.action) {
+            console.log('[DEBUG] Parsed action:', parsed.action.type, parsed.action.eventType, 'sessionKey:', parsed.action.sessionKey)
+          }
           if (parsed.session) {
             emit.next({ type: 'session', session: parsed.session })
           }

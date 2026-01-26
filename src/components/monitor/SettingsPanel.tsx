@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Settings, X, History, Wifi, WifiOff, RefreshCw } from 'lucide-react'
+import { Settings, X, History, Wifi, WifiOff, RefreshCw, Terminal } from 'lucide-react'
 
 interface SettingsPanelProps {
   connected: boolean
   historicalMode: boolean
+  debugMode: boolean
   onHistoricalModeChange: (enabled: boolean) => void
+  onDebugModeChange: (enabled: boolean) => void
   onConnect: () => void
   onDisconnect: () => void
   onRefresh: () => void
@@ -14,7 +16,9 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   connected,
   historicalMode,
+  debugMode,
   onHistoricalModeChange,
+  onDebugModeChange,
   onConnect,
   onDisconnect,
   onRefresh,
@@ -129,6 +133,31 @@ export function SettingsPanel({
                     }`}
                   >
                     {historicalMode ? 'Enabled' : 'Disabled'}
+                  </button>
+                </div>
+
+                {/* Debug mode toggle */}
+                <div className="panel-retro p-4">
+                  <div className="flex items-center gap-3 mb-2">
+                    <Terminal size={18} className="text-shell-500" />
+                    <span className="font-display text-sm font-medium text-gray-200 uppercase tracking-wide">
+                      Debug Logging
+                    </span>
+                  </div>
+
+                  <p className="font-console text-[10px] text-shell-500 mb-4">
+                    <span className="text-crab-600">&gt;</span> log raw events to terminal
+                  </p>
+
+                  <button
+                    onClick={() => onDebugModeChange(!debugMode)}
+                    className={`w-full px-4 py-2 font-display text-xs uppercase tracking-wide rounded-lg border-2 transition-all ${
+                      debugMode
+                        ? 'bg-neon-lavender/30 border-neon-lavender/50 text-neon-lavender'
+                        : 'bg-shell-800 border-shell-700 text-gray-400 hover:border-shell-600'
+                    }`}
+                  >
+                    {debugMode ? 'Enabled' : 'Disabled'}
                   </button>
                 </div>
 

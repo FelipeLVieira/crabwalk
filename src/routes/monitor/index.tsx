@@ -62,6 +62,7 @@ function MonitorPage() {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historicalMode, setHistoricalMode] = useState(false)
+  const [debugMode, setDebugMode] = useState(false)
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
 
   // Sidebar collapse state - default to collapsed on mobile
@@ -155,6 +156,15 @@ function MonitorPage() {
     setHistoricalMode(enabled)
     if (connected) {
       loadSessions()
+    }
+  }
+
+  const handleDebugModeChange = async (enabled: boolean) => {
+    setDebugMode(enabled)
+    try {
+      await trpc.clawdbot.setDebugMode.mutate({ enabled })
+    } catch (e) {
+      console.error('Failed to set debug mode:', e)
     }
   }
 
@@ -264,7 +274,9 @@ function MonitorPage() {
           <SettingsPanel
             connected={connected}
             historicalMode={historicalMode}
+            debugMode={debugMode}
             onHistoricalModeChange={handleHistoricalModeChange}
+            onDebugModeChange={handleDebugModeChange}
             onConnect={handleConnect}
             onDisconnect={handleDisconnect}
             onRefresh={handleRefresh}
