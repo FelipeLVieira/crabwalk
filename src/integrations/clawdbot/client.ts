@@ -108,20 +108,12 @@ export class ClawdbotClient {
       return
     }
 
-    // Sign nonce+timestamp with HMAC-SHA256
-    const message = `${challenge.nonce}:${challenge.ts}`
-    const signature = createHmac('sha256', this.token)
-      .update(message)
-      .digest('hex')
-
-    // Try format: type + connect params + challenge response
+    // Per docs: echo nonce in device, auth contains token
+    const params = createConnectParams(this.token)
     const response = {
-      type: 'connect',
-      ...createConnectParams(this.token),
-      challenge: {
+      ...params,
+      device: {
         nonce: challenge.nonce,
-        ts: challenge.ts,
-        signature,
       },
     }
 
