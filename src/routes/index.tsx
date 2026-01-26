@@ -143,7 +143,7 @@ function Home() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.5 }}
           >
-            <Link to="/monitor" className="btn-retro inline-block rounded-lg">
+            <Link to="/monitor" className="btn-retro inline-block rounded-lg font-black!">
               Launch Monitor
             </Link>
           </motion.div>

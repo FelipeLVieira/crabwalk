@@ -117,7 +117,7 @@ body {
 
 /* Display font for sub-headlines */
 .font-display {
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   letter-spacing: 0.05em;
 }
 

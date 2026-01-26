@@ -54,10 +54,13 @@ function MonitorPageWrapper() {
   return <MonitorPage />
 }
 
+const RETRY_DELAY = 3000
+const MAX_RETRIES = 10
+
 function MonitorPage() {
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
   const [historicalMode, setHistoricalMode] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [logCollection, setLogCollection] = useState(false)
@@ -89,20 +92,25 @@ function MonitorPage() {
     }
   }
 
-  const handleConnect = async () => {
+  const handleConnect = async (retry = 0) => {
     setConnecting(true)
-    setError(null)
+    setRetryCount(retry)
     try {
       const result = await trpc.clawdbot.connect.mutate()
       if (result.status === 'connected' || result.status === 'already_connected') {
         setConnected(true)
+        setRetryCount(0)
+        setConnecting(false)
         await loadSessions()
-      } else if (result.status === 'error') {
-        setError(result.message || 'Failed to connect')
+        return
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Connection error')
-    } finally {
+    } catch {
+      // Will retry below
+    }
+    // Retry if under max
+    if (retry < MAX_RETRIES) {
+      setTimeout(() => handleConnect(retry + 1), RETRY_DELAY)
+    } else {
       setConnecting(false)
     }
   }
@@ -206,7 +214,7 @@ function MonitorPage() {
     setSidebarCollapsed((prev) => !prev)
   }, [])
 
-  // Auto-connect on mount if not connected
+  // Auto-connect on mount
   useEffect(() => {
     if (!connected && !connecting) {
       handleConnect()
@@ -269,7 +277,7 @@ function MonitorPage() {
             </h1>
           </div>
 
-          <StatusIndicator status={connected ? 'active' : 'idle'} />
+          <StatusIndicator status={connecting ? 'thinking' : connected ? 'active' : 'idle'} />
         </div>
 
         <div className="relative flex items-center gap-4">
@@ -279,17 +287,11 @@ function MonitorPage() {
               animate={{ opacity: 1 }}
               className="flex items-center gap-2"
             >
-              <Loader2 size={14} className="animate-spin text-crab-400" />
-              <span className="font-console text-xs text-shell-500">
-                connecting...
+              <Loader2 size={14} className="animate-spin text-neon-peach" />
+              <span className="font-console text-xs text-shell-400">
+                {retryCount > 0 ? `retrying (${retryCount}/${MAX_RETRIES})...` : 'connecting...'}
               </span>
             </motion.div>
-          )}
-
-          {error && (
-            <div className="font-console text-xs text-crab-400 max-w-xs truncate">
-              <span className="text-crab-600">&gt;</span> error: {error}
-            </div>
           )}
 
           {/* Stats display */}
