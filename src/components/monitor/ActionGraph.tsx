@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -16,7 +16,7 @@ import '@xyflow/react/dist/style.css'
 import { SessionNode } from './SessionNode'
 import { ActionNode } from './ActionNode'
 import { CrabNode } from './CrabNode'
-import { ChaserCrab } from './ChaserCrab'
+import { ChaserCrabNode, type ChaserCrabState } from './ChaserCrabNode'
 import { layoutGraph } from '~/lib/graph-layout'
 import type { MonitorSession, MonitorAction } from '~/integrations/clawdbot'
 
@@ -28,12 +28,18 @@ interface ActionGraphProps {
 }
 
 const CRAB_NODE_ID = 'crab-origin'
+const CHASER_CRAB_ID = 'chaser-crab'
+
+const CRAB_SPEED = 4 // pixels per frame
+const ATTACK_DISTANCE = 40 // how close before attacking
+const ATTACK_CHANCE = 0.4 // 40% chance to attack when close
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
   session: SessionNode as any,
   action: ActionNode as any,
   crab: CrabNode as any,
+  chaserCrab: ChaserCrabNode as any,
 }
 
 // Inner component that uses ReactFlow hooks
@@ -43,6 +49,16 @@ function ActionGraphInner({
   selectedSession,
   onSessionSelect,
 }: ActionGraphProps) {
+  // Chaser crab state
+  const [chaserPosition, setChaserPosition] = useState({ x: 0, y: 0 })
+  const [chaserTarget, setChaserTarget] = useState<{ x: number; y: number } | null>(null)
+  const [chaserState, setChaserState] = useState<ChaserCrabState>('idle')
+  const [facingLeft, setFacingLeft] = useState(false)
+
+  const prevNodeIdsRef = useRef<Set<string>>(new Set())
+  const animationFrameRef = useRef<number>(undefined)
+  const attackTimeoutRef = useRef<NodeJS.Timeout>(undefined)
+
   // Filter actions for selected session, or show all if none selected
   const visibleActions = useMemo(() => {
     if (!selectedSession) return actions.slice(-50) // Last 50 actions
@@ -178,17 +194,130 @@ function ActionGraphInner({
     })
   }, [rawNodes, rawEdges])
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes)
+  // Add chaser crab to layouted nodes
+  const nodesWithChaser = useMemo(() => {
+    const chaserNode: Node = {
+      id: CHASER_CRAB_ID,
+      type: 'chaserCrab',
+      position: chaserPosition,
+      data: { state: chaserState, facingLeft },
+      draggable: false,
+      selectable: false,
+      zIndex: 1000,
+    }
+    return [...layoutedNodes, chaserNode]
+  }, [layoutedNodes, chaserPosition, chaserState, facingLeft])
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(nodesWithChaser)
   const [edges, setEdges, onEdgesChange] = useEdgesState(layoutedEdges)
 
-  // Get node IDs for the chaser crab
-  const nodeIds = useMemo(() => nodes.map((n) => n.id), [nodes])
-
-  // Update nodes when layout changes
+  // Detect new nodes and set them as targets for the chaser
   useEffect(() => {
-    setNodes(layoutedNodes)
+    const currentIds = new Set(layoutedNodes.map((n) => n.id))
+    const prevIds = prevNodeIdsRef.current
+
+    // Find newly added nodes (excluding the central crab node)
+    for (const node of layoutedNodes) {
+      if (!prevIds.has(node.id) && !node.id.includes('crab')) {
+        // New node found! Set it as target
+        const nodeCenter = {
+          x: node.position.x + 100, // Approximate center
+          y: node.position.y + 40,
+        }
+        setChaserTarget(nodeCenter)
+        setChaserState('running')
+
+        // Clear any existing attack timeout
+        if (attackTimeoutRef.current) {
+          clearTimeout(attackTimeoutRef.current)
+        }
+        break // Only chase one new node at a time
+      }
+    }
+
+    prevNodeIdsRef.current = currentIds
+  }, [layoutedNodes])
+
+  // Animation loop for chaser crab movement
+  useEffect(() => {
+    if (!chaserTarget || chaserState === 'attacking') return
+
+    const animate = () => {
+      setChaserPosition((current) => {
+        const dx = chaserTarget.x - current.x
+        const dy = chaserTarget.y - current.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+
+        // Check if we're close enough
+        if (distance < ATTACK_DISTANCE) {
+          // Randomly decide to attack or go idle
+          if (Math.random() < ATTACK_CHANCE) {
+            setChaserState('attacking')
+            // Return to idle after attack animation
+            attackTimeoutRef.current = setTimeout(() => {
+              setChaserState('idle')
+              setChaserTarget(null)
+            }, 400)
+          } else {
+            setChaserState('idle')
+            setChaserTarget(null)
+          }
+          return current
+        }
+
+        // Move towards target
+        const vx = (dx / distance) * CRAB_SPEED
+        const vy = (dy / distance) * CRAB_SPEED
+
+        // Update facing direction
+        if (Math.abs(vx) > 0.1) {
+          setFacingLeft(vx < 0)
+        }
+
+        return {
+          x: current.x + vx,
+          y: current.y + vy,
+        }
+      })
+
+      animationFrameRef.current = requestAnimationFrame(animate)
+    }
+
+    animationFrameRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [chaserTarget, chaserState])
+
+  // Update nodes when layout or chaser changes
+  useEffect(() => {
+    const chaserNode: Node = {
+      id: CHASER_CRAB_ID,
+      type: 'chaserCrab',
+      position: chaserPosition,
+      data: { state: chaserState, facingLeft },
+      draggable: false,
+      selectable: false,
+      zIndex: 1000,
+    }
+    setNodes([...layoutedNodes, chaserNode])
     setEdges(layoutedEdges)
-  }, [layoutedNodes, layoutedEdges, setNodes, setEdges])
+  }, [layoutedNodes, layoutedEdges, chaserPosition, chaserState, facingLeft, setNodes, setEdges])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (attackTimeoutRef.current) {
+        clearTimeout(attackTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -220,14 +349,13 @@ function ActionGraphInner({
         <MiniMap
           nodeColor={(node) => {
             if (node.type === 'crab') return '#ef4444' // crab red
+            if (node.type === 'chaserCrab') return '#ef4444' // chaser crab red
             if (node.type === 'session') return '#98ffc8' // neon mint
             return '#52526e' // shell
           }}
           maskColor="rgba(10, 10, 15, 0.8)"
         />
       </ReactFlow>
-      {/* Chaser crab overlay */}
-      <ChaserCrab nodeIds={nodeIds} />
     </div>
   )
 }
