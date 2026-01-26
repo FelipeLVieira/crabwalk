@@ -1,7 +1,40 @@
-/* Google Fonts: Arcade headline + Console body - must be first */
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap');
+/* Google Fonts: Arcade headline + Display */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Orbitron:wght@400;500;600;700;800;900&display=swap');
 
 @import 'tailwindcss';
+
+/* JetBrains Mono - Local Fonts */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrainsmono/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrainsmono/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrainsmono/JetBrainsMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrainsmono/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* =============================================================================
    CRABWALK RETRO-FUTURISTIC DESIGN SYSTEM
@@ -57,7 +90,7 @@
   /* Fonts */
   --font-arcade: 'Press Start 2P', monospace;
   --font-display: 'Orbitron', sans-serif;
-  --font-mono: 'Space Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
 
 /* =============================================================================
