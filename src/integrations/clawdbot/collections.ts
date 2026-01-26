@@ -49,6 +49,16 @@ export function updateSessionStatus(
   }
 }
 
+// Helper to update partial session data
+export function updateSession(key: string, update: Partial<MonitorSession>) {
+  const session = sessionsCollection.state.get(key)
+  if (session) {
+    sessionsCollection.update(key, (draft) => {
+      Object.assign(draft, update)
+    })
+  }
+}
+
 // Clear all data
 export function clearCollections() {
   for (const session of sessionsCollection.state.values()) {

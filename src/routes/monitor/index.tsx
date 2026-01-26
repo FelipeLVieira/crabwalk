@@ -7,6 +7,8 @@ import {
   sessionsCollection,
   actionsCollection,
   upsertSession,
+  addAction,
+  updateSessionStatus,
   clearCollections,
 } from '~/integrations/clawdbot'
 import {
@@ -136,6 +138,35 @@ function MonitorPage() {
     }, 5000) // Poll every 5 seconds
     return () => clearInterval(interval)
   }, [connected, historicalMode])
+
+  // Subscribe to real-time events
+  useEffect(() => {
+    if (!connected) return
+    console.log('[monitor] starting events subscription')
+
+    const subscription = trpc.clawdbot.events.subscribe(undefined, {
+      onData: (data) => {
+        console.log('[monitor] received event:', data.type, data.action?.type || data.session?.status)
+        if (data.type === 'session' && data.session) {
+          const key = data.session.key
+          if (key && data.session.status) {
+            updateSessionStatus(key, data.session.status)
+          }
+        }
+        if (data.type === 'action' && data.action) {
+          addAction(data.action)
+        }
+      },
+      onError: (err) => {
+        console.error('[monitor] subscription error:', err)
+      },
+    })
+
+    return () => {
+      console.log('[monitor] ending events subscription')
+      subscription.unsubscribe()
+    }
+  }, [connected])
 
   return (
     <div className="h-screen flex flex-col bg-gray-950 text-white">
