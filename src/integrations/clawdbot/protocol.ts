@@ -142,17 +142,24 @@ export function parseSessionKey(key: string): {
   return { agentId, platform, recipient, isGroup }
 }
 
-export function createConnectParams(token?: string): ConnectParams {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createConnectParams(token?: string): any {
   return {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: 'clawdbot',
-      displayName: 'Crabwalk Monitor',
+      id: 'cli',
       version: '0.1.0',
-      platform: 'node',
-      mode: 'bot',
+      platform: 'linux',
+      mode: 'operator',
     },
+    role: 'operator',
+    scopes: ['operator.read'],
+    caps: [],
+    commands: [],
+    permissions: {},
+    locale: 'en-US',
+    userAgent: 'crabwalk-monitor/0.1.0',
     auth: token ? { token } : undefined,
   }
 }
