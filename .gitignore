@@ -31,3 +31,5 @@ pnpm-debug.log*
 
 # Generated
 src/routeTree.gen.ts
+
+documents/*
