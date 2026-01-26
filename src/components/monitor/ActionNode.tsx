@@ -11,8 +11,14 @@ import {
   MessageCircle,
   Bot,
   Play,
+  FileText,
+  Terminal,
+  Search,
+  Edit3,
+  Globe,
+  Zap,
 } from 'lucide-react'
-import type { MonitorAction } from '~/integrations/clawdbot'
+import type { MonitorAction, ToolCall } from '~/integrations/clawdbot'
 
 interface ActionNodeProps {
   data: MonitorAction
@@ -75,20 +81,75 @@ const stateConfig: Record<
     iconColor: 'text-crab-400',
     animate: false,
   },
-  tool_call: {
-    icon: Wrench,
-    borderColor: 'border-neon-lavender',
-    bgColor: 'bg-neon-lavender/10',
-    iconColor: 'text-neon-lavender',
-    animate: false,
-  },
-  tool_result: {
-    icon: MessageSquare,
-    borderColor: 'border-pastel-sky',
-    bgColor: 'bg-pastel-sky/10',
-    iconColor: 'text-pastel-sky',
-    animate: false,
-  },
+}
+
+// Tool name to icon mapping
+const toolIcons: Record<string, typeof Wrench> = {
+  Read: FileText,
+  Write: Edit3,
+  Edit: Edit3,
+  Bash: Terminal,
+  Grep: Search,
+  Glob: Search,
+  WebFetch: Globe,
+  WebSearch: Globe,
+  Task: Zap,
+  Skill: Zap,
+}
+
+function getToolIcon(name: string): typeof Wrench {
+  // Check exact match
+  if (toolIcons[name]) return toolIcons[name]
+  // Check partial match
+  for (const [key, icon] of Object.entries(toolIcons)) {
+    if (name.toLowerCase().includes(key.toLowerCase())) return icon
+  }
+  return Wrench
+}
+
+// Tool icon with hover tooltip
+function ToolIcon({ tool }: { tool: ToolCall }) {
+  const [showTooltip, setShowTooltip] = useState(false)
+  const Icon = getToolIcon(tool.name)
+
+  const statusColor = {
+    pending: 'text-shell-400',
+    running: 'text-neon-cyan animate-pulse',
+    success: 'text-neon-mint',
+    error: 'text-crab-400',
+  }[tool.status]
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <Icon size={14} className={statusColor} />
+      {showTooltip && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none">
+          <div className="bg-shell-800 border border-shell-600 rounded-lg px-2.5 py-2 shadow-xl min-w-[150px] max-w-[300px]">
+            <div className="font-console text-[11px] text-neon-lavender font-medium mb-1">
+              {tool.name}
+            </div>
+            <div className="font-console text-[10px] text-shell-400 mb-1">
+              {tool.status}
+            </div>
+            {tool.args && (
+              <pre className="font-console text-[9px] text-shell-500 bg-shell-950 p-1 rounded max-h-20 overflow-auto">
+                {typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 1)}
+              </pre>
+            )}
+            {tool.result && (
+              <div className="mt-1 font-console text-[9px] text-shell-400 line-clamp-2">
+                → {tool.result.slice(0, 100)}{tool.result.length > 100 ? '...' : ''}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const eventTypeLabels: Record<MonitorAction['eventType'], { label: string; icon: typeof MessageCircle }> = {
@@ -173,6 +234,15 @@ export const ActionNode = memo(function ActionNode({
         <span className="text-crab-600">&gt;</span> {formatTime(data.timestamp)}
       </div>
 
+      {/* Tool icons */}
+      {data.tools && data.tools.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+          {data.tools.map((tool) => (
+            <ToolIcon key={tool.id} tool={tool} />
+          ))}
+        </div>
+      )}
+
       {/* Metadata for complete nodes */}
       {hasMetadata && (
         <div className="font-console text-xs text-shell-400 mb-1.5 flex gap-2 flex-wrap">
@@ -191,12 +261,6 @@ export const ActionNode = memo(function ActionNode({
         </div>
       )}
 
-      {data.toolName && (
-        <div className="font-console text-[10px] text-neon-lavender mb-1.5">
-          <span className="text-shell-500">tool:</span> {data.toolName}
-        </div>
-      )}
-
       {/* Content - markdown for both preview and expanded */}
       {(expanded ? fullContent : truncatedContent) && (
         <div className={`
@@ -212,12 +276,6 @@ export const ActionNode = memo(function ActionNode({
         `}>
           <Markdown>{expanded ? fullContent! : truncatedContent!}</Markdown>
         </div>
-      )}
-
-      {expanded && data.toolArgs != null && (
-        <pre className="mt-2 font-console text-[11px] text-shell-500 bg-shell-950 p-2 rounded border border-shell-800 overflow-auto max-h-32">
-          {JSON.stringify(data.toolArgs, null, 2) as string}
-        </pre>
       )}
 
       <Handle type="source" position={Position.Bottom} className="bg-shell-600! w-2! h-2! border-shell-800!" />

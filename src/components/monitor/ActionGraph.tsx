@@ -608,6 +608,10 @@ function ActionGraphInner({
             if (node.type === 'crab') return '#ef4444'
             if (node.type === 'chaserCrab') return '#ef4444'
             if (node.type === 'session') return '#98ffc8'
+            // Action type colors
+            const action = node.data as MonitorAction | undefined
+            if (action?.type === 'error') return '#ef4444'
+            if (action?.tools && action.tools.length > 0) return '#c4b5fd' // Has tools
             return '#52526e'
           }}
           maskColor="rgba(10, 10, 15, 0.8)"

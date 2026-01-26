@@ -9,6 +9,7 @@ import {
   actionsCollection,
   upsertSession,
   addAction,
+  addToolCall,
   updateSessionStatus,
   clearCollections,
 } from '~/integrations/clawdbot'
@@ -241,6 +242,9 @@ function MonitorPage() {
         }
         if (data.type === 'action' && data.action) {
           addAction(data.action)
+        }
+        if (data.type === 'toolCall' && data.runId && data.tool) {
+          addToolCall(data.runId, data.tool)
         }
       },
       onError: (err) => {

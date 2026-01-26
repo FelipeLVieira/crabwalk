@@ -5,8 +5,15 @@ import type {
   MonitorSession,
   MonitorAction,
   SessionInfo,
+  ToolCall,
 } from './protocol'
 import { parseSessionKey } from './protocol'
+
+export interface ParsedEvent {
+  session?: Partial<MonitorSession>
+  action?: MonitorAction
+  toolCall?: { runId: string; tool: ToolCall }
+}
 
 export function sessionInfoToMonitor(info: SessionInfo): MonitorSession {
   const parsed = parseSessionKey(info.key)
@@ -21,7 +28,12 @@ export function sessionInfoToMonitor(info: SessionInfo): MonitorSession {
   }
 }
 
-export function chatEventToAction(event: ChatEvent): MonitorAction {
+export interface ChatParseResult {
+  action: MonitorAction
+  toolCalls: ToolCall[]
+}
+
+export function chatEventToAction(event: ChatEvent): ChatParseResult {
   // Map chat state to new action types
   let type: MonitorAction['type'] = 'streaming'
   if (event.state === 'final') type = 'complete'
@@ -38,6 +50,8 @@ export function chatEventToAction(event: ChatEvent): MonitorAction {
     eventType: 'chat',
     timestamp: Date.now(),
   }
+
+  const toolCalls: ToolCall[] = []
 
   // Extract usage/stopReason from final events
   if (event.state === 'final') {
@@ -56,7 +70,7 @@ export function chatEventToAction(event: ChatEvent): MonitorAction {
     } else if (typeof event.message === 'object') {
       const msg = event.message as Record<string, unknown>
 
-      // Extract text from content blocks: [{type: 'text', text: '...'}]
+      // Extract text and tools from content blocks
       if (Array.isArray(msg.content)) {
         const texts: string[] = []
         for (const block of msg.content) {
@@ -65,12 +79,21 @@ export function chatEventToAction(event: ChatEvent): MonitorAction {
             if (b.type === 'text' && typeof b.text === 'string') {
               texts.push(b.text)
             } else if (b.type === 'tool_use') {
-              action.type = 'tool_call'
-              action.toolName = String(b.name || 'unknown')
-              action.toolArgs = b.input
+              toolCalls.push({
+                id: String(b.id || `tool-${Date.now()}`),
+                name: String(b.name || 'unknown'),
+                args: b.input,
+                status: 'pending',
+                timestamp: Date.now(),
+              })
             } else if (b.type === 'tool_result') {
-              action.type = 'tool_result'
-              if (typeof b.content === 'string') {
+              // Find matching tool call and update it
+              const toolId = String(b.tool_use_id || '')
+              const existingTool = toolCalls.find(t => t.id === toolId)
+              if (existingTool) {
+                existingTool.result = typeof b.content === 'string' ? b.content : JSON.stringify(b.content)
+                existingTool.status = b.is_error ? 'error' : 'success'
+              } else if (typeof b.content === 'string') {
                 texts.push(b.content)
               }
             }
@@ -91,21 +114,25 @@ export function chatEventToAction(event: ChatEvent): MonitorAction {
     action.content = event.errorMessage
   }
 
-  return action
+  return { action, toolCalls }
 }
 
-export function agentEventToAction(event: AgentEvent): MonitorAction {
-  const data = event.data
+export interface AgentParseResult {
+  action?: MonitorAction
+  toolCall?: ToolCall
+  toolResult?: { toolId: string; result: string; isError: boolean }
+}
 
-  let type: MonitorAction['type'] = 'streaming'
-  let content: string | undefined
-  let toolName: string | undefined
-  let toolArgs: unknown | undefined
-  let startedAt: number | undefined
-  let endedAt: number | undefined
+export function agentEventToAction(event: AgentEvent): AgentParseResult {
+  const data = event.data
 
   // Handle lifecycle events
   if (event.stream === 'lifecycle') {
+    let type: MonitorAction['type'] = 'streaming'
+    let content: string | undefined
+    let startedAt: number | undefined
+    let endedAt: number | undefined
+
     if (data.phase === 'start') {
       type = 'start'
       content = 'Run started'
@@ -115,39 +142,67 @@ export function agentEventToAction(event: AgentEvent): MonitorAction {
       content = 'Run completed'
       endedAt = typeof data.endedAt === 'number' ? data.endedAt : event.ts
     }
-  } else if (data.type === 'tool_use') {
-    type = 'tool_call'
-    toolName = String(data.name || 'unknown')
-    toolArgs = data.input
-    content = `Tool: ${toolName}`
-  } else if (data.type === 'tool_result') {
-    type = 'tool_result'
-    content = String(data.content || '')
-  } else if (data.type === 'text') {
-    type = 'streaming'
-    content = String(data.text || '')
+
+    return {
+      action: {
+        id: `${event.runId}-${event.seq}`,
+        runId: event.runId,
+        sessionKey: event.sessionKey || event.stream,
+        seq: event.seq,
+        type,
+        eventType: 'agent' as const,
+        timestamp: event.ts,
+        content,
+        startedAt,
+        endedAt,
+      }
+    }
   }
 
-  return {
-    id: `${event.runId}-${event.seq}`,
-    runId: event.runId,
-    // Use sessionKey from event if available, fallback to stream
-    sessionKey: event.sessionKey || event.stream,
-    seq: event.seq,
-    type,
-    eventType: 'agent' as const,
-    timestamp: event.ts,
-    content,
-    toolName,
-    toolArgs,
-    startedAt,
-    endedAt,
+  // Handle tool use - return as tool call to be aggregated
+  if (data.type === 'tool_use') {
+    return {
+      toolCall: {
+        id: String(data.id || `tool-${event.seq}`),
+        name: String(data.name || 'unknown'),
+        args: data.input,
+        status: 'running',
+        timestamp: event.ts,
+      }
+    }
   }
+
+  // Handle tool result
+  if (data.type === 'tool_result') {
+    return {
+      toolResult: {
+        toolId: String(data.tool_use_id || ''),
+        result: typeof data.content === 'string' ? data.content : JSON.stringify(data.content),
+        isError: Boolean(data.is_error),
+      }
+    }
+  }
+
+  // Text streaming (usually duplicates chat events)
+  if (data.type === 'text') {
+    return {
+      action: {
+        id: `${event.runId}-${event.seq}`,
+        runId: event.runId,
+        sessionKey: event.sessionKey || event.stream,
+        seq: event.seq,
+        type: 'streaming',
+        eventType: 'agent' as const,
+        timestamp: event.ts,
+        content: String(data.text || ''),
+      }
+    }
+  }
+
+  return {}
 }
 
-export function parseEventFrame(
-  frame: EventFrame
-): { session?: Partial<MonitorSession>; action?: MonitorAction } | null {
+export function parseEventFrame(frame: EventFrame): ParsedEvent | null {
   // Skip system events
   if (frame.event === 'health' || frame.event === 'tick') {
     return null
@@ -155,31 +210,70 @@ export function parseEventFrame(
 
   if (frame.event === 'chat' && frame.payload) {
     const chatEvent = frame.payload as ChatEvent
-    return {
-      action: chatEventToAction(chatEvent),
+    const { action, toolCalls } = chatEventToAction(chatEvent)
+
+    const result: ParsedEvent = {
+      action,
       session: {
         key: chatEvent.sessionKey,
         status: chatEvent.state === 'delta' ? 'thinking' : 'active',
         lastActivityAt: Date.now(),
       },
     }
+
+    // If there are tool calls, return the first one (others will come in subsequent events)
+    if (toolCalls.length > 0) {
+      result.toolCall = { runId: chatEvent.runId, tool: toolCalls[0]! }
+    }
+
+    return result
   }
 
   if (frame.event === 'agent' && frame.payload) {
     const agentEvent = frame.payload as AgentEvent
+    const parsed = agentEventToAction(agentEvent)
 
-    // Skip assistant stream - it duplicates chat events
-    if (agentEvent.stream === 'assistant') {
-      return null
-    }
-
-    // Only process lifecycle events (start/end markers)
-    if (agentEvent.stream === 'lifecycle') {
+    // Lifecycle events return action
+    if (parsed.action) {
       return {
-        action: agentEventToAction(agentEvent),
+        action: parsed.action,
         session: agentEvent.sessionKey ? {
           key: agentEvent.sessionKey,
           status: agentEvent.data?.phase === 'start' ? 'thinking' : 'active',
+          lastActivityAt: Date.now(),
+        } : undefined,
+      }
+    }
+
+    // Tool calls
+    if (parsed.toolCall) {
+      return {
+        toolCall: { runId: agentEvent.runId, tool: parsed.toolCall },
+        session: agentEvent.sessionKey ? {
+          key: agentEvent.sessionKey,
+          status: 'thinking',
+          lastActivityAt: Date.now(),
+        } : undefined,
+      }
+    }
+
+    // Tool results - need special handling
+    if (parsed.toolResult) {
+      // Return as a pseudo tool call that will update existing tool
+      return {
+        toolCall: {
+          runId: agentEvent.runId,
+          tool: {
+            id: parsed.toolResult.toolId,
+            name: '', // Will be filled from existing
+            result: parsed.toolResult.result,
+            status: parsed.toolResult.isError ? 'error' : 'success',
+            timestamp: agentEvent.ts,
+          }
+        },
+        session: agentEvent.sessionKey ? {
+          key: agentEvent.sessionKey,
+          status: 'active',
           lastActivityAt: Date.now(),
         } : undefined,
       }

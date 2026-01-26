@@ -112,15 +112,27 @@ export interface MonitorSession {
   status: 'idle' | 'active' | 'thinking'
 }
 
+export interface ToolCall {
+  id: string
+  name: string
+  args?: unknown
+  result?: string
+  status: 'pending' | 'running' | 'success' | 'error'
+  timestamp: number
+}
+
 export interface MonitorAction {
   id: string
   runId: string
   sessionKey: string
   seq: number
-  type: 'start' | 'streaming' | 'complete' | 'aborted' | 'error' | 'tool_call' | 'tool_result'
+  type: 'start' | 'streaming' | 'complete' | 'aborted' | 'error'
   eventType: 'chat' | 'agent' | 'system'
   timestamp: number
   content?: string
+  // Inline tool calls for this action
+  tools?: ToolCall[]
+  // Legacy fields (for backwards compat)
   toolName?: string
   toolArgs?: unknown
   // Metadata from lifecycle/chat events

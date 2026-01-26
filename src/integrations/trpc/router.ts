@@ -8,6 +8,7 @@ import {
   sessionInfoToMonitor,
   type MonitorSession,
   type MonitorAction,
+  type ToolCall,
 } from '~/integrations/clawdbot'
 
 // Server-side debug mode state
@@ -157,11 +158,17 @@ const clawdbotRouter = router({
           if (debugMode && parsed.action) {
             console.log('[DEBUG] Parsed action:', parsed.action.type, parsed.action.eventType, 'sessionKey:', parsed.action.sessionKey)
           }
+          if (debugMode && parsed.toolCall) {
+            console.log('[DEBUG] Tool call:', parsed.toolCall.tool.name, 'status:', parsed.toolCall.tool.status)
+          }
           if (parsed.session) {
             emit.next({ type: 'session', session: parsed.session })
           }
           if (parsed.action) {
             emit.next({ type: 'action', action: parsed.action })
+          }
+          if (parsed.toolCall) {
+            emit.next({ type: 'toolCall', runId: parsed.toolCall.runId, tool: parsed.toolCall.tool })
           }
         }
       })

@@ -1,5 +1,5 @@
 import { createCollection, localOnlyCollectionOptions } from '@tanstack/db'
-import type { MonitorSession, MonitorAction } from './protocol'
+import type { MonitorSession, MonitorAction, ToolCall } from './protocol'
 
 // Track runId → sessionKey mapping (learned from chat events)
 const runSessionMap = new Map<string, string>()
@@ -117,11 +117,40 @@ export function addAction(action: MonitorAction) {
     actionsCollection.insert({ ...action, sessionKey, id: `${action.runId}-complete` })
     return
   }
+}
 
-  // For tool_call/tool_result, add as separate nodes
-  const existing = actionsCollection.state.get(action.id)
-  if (!existing) {
-    actionsCollection.insert({ ...action, sessionKey })
+// Add a tool call to the current streaming action for a run
+export function addToolCall(runId: string, tool: ToolCall) {
+  const streamingId = `${runId}-stream`
+  const streaming = actionsCollection.state.get(streamingId)
+  if (streaming) {
+    actionsCollection.update(streamingId, (draft) => {
+      if (!draft.tools) draft.tools = []
+      // Check if tool already exists (by id)
+      const existingIdx = draft.tools.findIndex(t => t.id === tool.id)
+      if (existingIdx >= 0) {
+        draft.tools[existingIdx] = { ...draft.tools[existingIdx], ...tool }
+      } else {
+        draft.tools.push(tool)
+      }
+    })
+  }
+}
+
+// Update a tool call result
+export function updateToolResult(runId: string, toolId: string, result: string, status: ToolCall['status'] = 'success') {
+  const streamingId = `${runId}-stream`
+  const streaming = actionsCollection.state.get(streamingId)
+  if (streaming) {
+    actionsCollection.update(streamingId, (draft) => {
+      if (draft.tools) {
+        const tool = draft.tools.find(t => t.id === toolId)
+        if (tool) {
+          tool.result = result
+          tool.status = status
+        }
+      }
+    })
   }
 }
 
