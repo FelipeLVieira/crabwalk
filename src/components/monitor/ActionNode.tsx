@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { motion } from 'framer-motion'
+import Markdown from 'react-markdown'
 import {
   Loader2,
   CheckCircle,
@@ -143,9 +144,10 @@ export const ActionNode = memo(function ActionNode({
       transition={{ duration: 0.2 }}
       onClick={() => setExpanded(!expanded)}
       className={`
-        px-3 py-2.5 rounded-lg border-2 min-w-[180px] max-w-[300px] cursor-pointer
+        px-3 py-2.5 rounded-lg border-2 min-w-[180px] cursor-pointer
         bg-shell-900 ${state.borderColor}
         ${selected ? 'ring-2 ring-white/30' : ''}
+        ${expanded ? 'max-w-[600px]' : 'max-w-[300px]'}
         transition-all duration-150 hover:bg-shell-800
       `}
       style={{
@@ -195,11 +197,24 @@ export const ActionNode = memo(function ActionNode({
         </div>
       )}
 
-      {truncatedContent && (
-        <div className="font-console text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">
-          {expanded ? fullContent : truncatedContent}
+      {/* Content - truncated preview or full markdown */}
+      {expanded && fullContent ? (
+        <div className="prose prose-invert prose-sm max-w-none text-gray-300 overflow-auto max-h-[400px]
+          prose-headings:text-gray-200 prose-headings:font-display prose-headings:text-sm
+          prose-p:text-[12px] prose-p:leading-relaxed prose-p:my-1
+          prose-code:text-neon-cyan prose-code:bg-shell-950 prose-code:px-1 prose-code:rounded prose-code:text-[11px]
+          prose-pre:bg-shell-950 prose-pre:border prose-pre:border-shell-800 prose-pre:text-[11px]
+          prose-a:text-neon-lavender prose-a:no-underline hover:prose-a:underline
+          prose-li:text-[12px] prose-li:my-0.5
+          prose-strong:text-gray-200
+        ">
+          <Markdown>{fullContent}</Markdown>
         </div>
-      )}
+      ) : truncatedContent ? (
+        <div className="font-console text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">
+          {truncatedContent}
+        </div>
+      ) : null}
 
       {expanded && data.toolArgs != null && (
         <pre className="mt-2 font-console text-[11px] text-shell-500 bg-shell-950 p-2 rounded border border-shell-800 overflow-auto max-h-32">
