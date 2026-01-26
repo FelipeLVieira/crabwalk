@@ -229,7 +229,7 @@ export function SessionList({
           </a>
 
           <a
-            href="https://x.com/luccast"
+            href="https://x.com/luccasveg"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-neon-mint hover:text-neon-mint/80 transition-colors"
