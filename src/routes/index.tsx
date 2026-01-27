@@ -122,7 +122,7 @@ function Home() {
             transition={{ duration: 0.5, delay: 0.3 }}
             className="font-console font-bold text-lg text-gray-400 mb-4 tracking-wide uppercase"
           >
-            Open-Source Clawdbot Companion
+            Open-Source Moltbot (Clawdbot) Companion
           </motion.p>
 
           {/* Console-style description */}

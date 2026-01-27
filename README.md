@@ -1,6 +1,6 @@
 # 🦀 Crabwalk
 
-Real-time companion monitor for [Clawdbot](https://github.com/clawdbot/clawdbot) agents by [@luccasveg](https://x.com/luccasveg).
+Real-time companion monitor for [Moltbot (Clawdbot)](https://github.com/moltbot/moltbot) agents by [@luccasveg](https://x.com/luccasveg).
 
 Watch your AI agents work across WhatsApp, Telegram, Discord, and Slack in a live node graph. See thinking states, tool calls, and response chains as they happen.
 

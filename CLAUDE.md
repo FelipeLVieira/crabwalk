@@ -36,7 +36,7 @@ Full-stack React app using TanStack Start (file-based routing, SSR).
 
 **TanStack DB pattern:** Create collections, use `useLiveQuery()` for reactive reads, `createTransaction()` for writes.
 
-## Clawdbot Monitor
+## Moltbot (Clawdbot) Monitor
 
 Real-time agent activity monitor at `/monitor`.
 
