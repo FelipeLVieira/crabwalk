@@ -45,6 +45,41 @@ interface SessionColumn {
   }>
 }
 
+interface NodeBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * Check if two node bounding boxes overlap (with padding)
+ */
+function checkCollision(a: NodeBounds, b: NodeBounds, padding = 0): boolean {
+  return !(
+    a.x + a.width + padding < b.x ||
+    b.x + b.width + padding < a.x ||
+    a.y + a.height + padding < b.y ||
+    b.y + b.height + padding < a.y
+  )
+}
+
+/**
+ * Check if a position would cause collision with existing nodes
+ */
+function hasCollision(
+  x: number,
+  y: number,
+  dims: { width: number; height: number },
+  existingNodes: Array<{ x: number; y: number; dims: { width: number; height: number } }>,
+  padding = 0
+): boolean {
+  const candidate = { x, y, width: dims.width, height: dims.height }
+  return existingNodes.some(node => 
+    checkCollision(candidate, { x: node.x, y: node.y, width: node.dims.width, height: node.dims.height }, padding)
+  )
+}
+
 /**
  * Radial layout algorithm:
  * - Central crab at the origin (0, 0)
@@ -72,10 +107,12 @@ export function layoutGraph(
 
   const crabNode = nodes.find((n) => n.type === 'crab')
 
-  // Radial layout constants
-  const BASE_RADIUS = 400 // Distance from crab for main sessions
-  const CHILD_OFFSET = 250 // Offset for child sessions from their parent
-  const RADIAL_SPACING = 100 // Space between items radiating outward
+  // Radial layout constants - increased for better spacing
+  const BASE_RADIUS = 500 // Distance from crab for main sessions
+  const CHILD_OFFSET = 350 // Offset for child sessions from their parent
+  const RADIAL_SPACING = 160 // Space between items radiating outward
+  const MIN_SIBLING_ANGLE = 0.4 // ~23° minimum angle between siblings (radians)
+  const COLLISION_PADDING = 40 // Extra padding for collision detection
 
   // Build session hierarchy - organize sessions by their depth
   const sessionDepth = new Map<string, number>()
@@ -205,6 +242,9 @@ export function layoutGraph(
   // Track session positions for child placement
   const sessionPositions = new Map<string, { x: number; y: number; angle: number }>()
 
+  // Track positioned nodes for collision detection
+  const positionedNodeBounds: Array<{ x: number; y: number; dims: { width: number; height: number } }> = []
+
   // Position root sessions (depth 0) in a circle around the crab
   const rootSessions = sessionsByDepth.get(0) ?? []
   const angleStep = (2 * Math.PI) / Math.max(rootSessions.length, 1)
@@ -226,8 +266,17 @@ export function layoutGraph(
       const dims = NODE_DIMENSIONS[item.type]
       
       // Position along the radial direction from center
-      const itemX = baseX + Math.cos(angle) * currentRadius
-      const itemY = baseY + Math.sin(angle) * currentRadius
+      let itemX = baseX + Math.cos(angle) * currentRadius
+      let itemY = baseY + Math.sin(angle) * currentRadius
+      
+      // Collision avoidance: if this position overlaps, increase radius slightly
+      let radiusAdjustment = 0
+      while (hasCollision(itemX, itemY, dims, positionedNodeBounds, COLLISION_PADDING) && radiusAdjustment < 500) {
+        radiusAdjustment += 30
+        const adjustedRadius = currentRadius + radiusAdjustment
+        itemX = baseX + Math.cos(angle) * adjustedRadius
+        itemY = baseY + Math.sin(angle) * adjustedRadius
+      }
       
       positionedNodes.push({
         id: item.nodeId,
@@ -236,8 +285,9 @@ export function layoutGraph(
         data: nodeData(item.data),
       })
       positionedNodeIds.add(item.nodeId)
+      positionedNodeBounds.push({ x: itemX, y: itemY, dims })
       
-      currentRadius += dims.height + RADIAL_SPACING
+      currentRadius += dims.height + RADIAL_SPACING + radiusAdjustment
     }
   }
 
@@ -258,15 +308,26 @@ export function layoutGraph(
       const siblingCount = siblings.length
       
       // Spread children around the parent's radial direction
-      // Use small angular offsets to nest them near parent
-      const angularSpread = Math.PI / 4 // 45 degrees total spread
+      // Ensure minimum angular separation between siblings
+      const minAngularSpread = MIN_SIBLING_ANGLE * siblingCount
+      const angularSpread = Math.max(Math.PI / 3, minAngularSpread) // At least 60° or calculated minimum
       const siblingAngleOffset = siblingCount > 1 
         ? (siblingIndex - (siblingCount - 1) / 2) * (angularSpread / siblingCount)
         : 0
       
-      const childAngle = parentPos.angle + siblingAngleOffset
-      const childX = parentPos.x + Math.cos(childAngle) * CHILD_OFFSET
-      const childY = parentPos.y + Math.sin(childAngle) * CHILD_OFFSET
+      let childAngle = parentPos.angle + siblingAngleOffset
+      let childX = parentPos.x + Math.cos(childAngle) * CHILD_OFFSET
+      let childY = parentPos.y + Math.sin(childAngle) * CHILD_OFFSET
+      
+      // Collision avoidance for session position
+      const sessionDims = NODE_DIMENSIONS.session
+      let offsetAdjustment = 0
+      while (hasCollision(childX, childY, sessionDims, positionedNodeBounds, COLLISION_PADDING) && offsetAdjustment < 300) {
+        offsetAdjustment += 50
+        const adjustedOffset = CHILD_OFFSET + offsetAdjustment
+        childX = parentPos.x + Math.cos(childAngle) * adjustedOffset
+        childY = parentPos.y + Math.sin(childAngle) * adjustedOffset
+      }
       
       sessionPositions.set(session.key, { x: childX, y: childY, angle: childAngle })
       
@@ -278,8 +339,17 @@ export function layoutGraph(
       for (const item of items.items) {
         const dims = NODE_DIMENSIONS[item.type]
         
-        const itemX = childX + Math.cos(childAngle) * currentRadius
-        const itemY = childY + Math.sin(childAngle) * currentRadius
+        let itemX = childX + Math.cos(childAngle) * currentRadius
+        let itemY = childY + Math.sin(childAngle) * currentRadius
+        
+        // Collision avoidance: if this position overlaps, increase radius
+        let radiusAdjustment = 0
+        while (hasCollision(itemX, itemY, dims, positionedNodeBounds, COLLISION_PADDING) && radiusAdjustment < 500) {
+          radiusAdjustment += 30
+          const adjustedRadius = currentRadius + radiusAdjustment
+          itemX = childX + Math.cos(childAngle) * adjustedRadius
+          itemY = childY + Math.sin(childAngle) * adjustedRadius
+        }
         
         positionedNodes.push({
           id: item.nodeId,
@@ -288,8 +358,9 @@ export function layoutGraph(
           data: nodeData(item.data),
         })
         positionedNodeIds.add(item.nodeId)
+        positionedNodeBounds.push({ x: itemX, y: itemY, dims })
         
-        currentRadius += dims.height + RADIAL_SPACING
+        currentRadius += dims.height + RADIAL_SPACING + radiusAdjustment
       }
     }
   }
