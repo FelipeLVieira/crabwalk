@@ -20,6 +20,7 @@ import { ActionNode } from './ActionNode'
 import { ExecNode } from './ExecNode'
 import { CrabNode } from './CrabNode'
 import { ChaserCrabNode, type ChaserCrabState } from './ChaserCrabNode'
+import { Legend } from './Legend'
 import { layoutGraph } from '~/lib/graph-layout'
 import type {
   MonitorSession,
@@ -55,13 +56,20 @@ const IDLE_PAUSE_MAX = 3000 // max ms to pause when idle
 const WANDER_CHANCE = 0.3 // 30% chance to wander after idle pause
 const SIDEWAYS_DRIFT = 0.4 // crabs scuttle sideways
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const nodeTypes: NodeTypes = {
-  session: SessionNode as any,
-  action: ActionNode as any,
-  exec: ExecNode as any,
-  crab: CrabNode as any,
-  chaserCrab: ChaserCrabNode as any,
+// Create node types factory that can access sessions
+function createNodeTypes(sessions: MonitorSession[]): NodeTypes {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SessionNodeWithSessions = (props: any) => (
+    <SessionNode {...props} allSessions={sessions} />
+  )
+  
+  return {
+    session: SessionNodeWithSessions,
+    action: ActionNode as any,
+    exec: ExecNode as any,
+    crab: CrabNode as any,
+    chaserCrab: ChaserCrabNode as any,
+  }
 }
 
 interface CrabAI {
@@ -731,6 +739,9 @@ function ActionGraphInner({
     [onSessionSelect, selectedSession]
   )
 
+  // Create node types with sessions context
+  const nodeTypesWithSessions = useMemo(() => createNodeTypes(sessions), [sessions])
+
   return (
     <div className="w-full h-full bg-shell-950 texture-grid relative">
       <ReactFlow
@@ -739,7 +750,7 @@ function ActionGraphInner({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
-        nodeTypes={nodeTypes}
+        nodeTypes={nodeTypesWithSessions}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
@@ -750,7 +761,7 @@ function ActionGraphInner({
         <Controls
           className="bg-shell-900! border-shell-700! shadow-lg! [&>button]:bg-shell-800! [&>button]:border-shell-700! [&>button]:text-gray-300! [&>button:hover]:bg-shell-700! [&>button>svg]:fill-gray-300!"
         />
-        <div className="absolute top-2 right-2 z-10">
+        <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 items-end">
           <button
             onClick={handleReorganize}
             title="Re-organize layout"
@@ -758,6 +769,7 @@ function ActionGraphInner({
           >
             <LayoutGrid className="w-4 h-4" />
           </button>
+          <Legend />
         </div>
         <MiniMap
           nodeColor={(node) => {

@@ -1,13 +1,37 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState, useMemo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Users, User, Clock, Copy, Check } from 'lucide-react'
 import { StatusIndicator } from './StatusIndicator'
 import type { MonitorSession } from '~/integrations/clawdbot'
+import { getSessionTypeInfo, getDepthAdjustedColor } from '~/lib/session-type-detection'
 
 interface SessionNodeProps {
   data: MonitorSession
   selected?: boolean
+  allSessions?: MonitorSession[]
+}
+
+interface SessionBadgeProps {
+  emoji: string
+  text: string
+  color: string
+}
+
+function SessionBadge({ emoji, text, color }: SessionBadgeProps) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium font-console"
+      style={{
+        backgroundColor: `${color}20`,
+        color: color,
+        border: `1px solid ${color}40`,
+      }}
+    >
+      <span>{emoji}</span>
+      <span>{text}</span>
+    </span>
+  )
 }
 
 const platformIcons: Record<string, string> = {
@@ -35,6 +59,7 @@ function formatRelativeTime(timestamp: number): string {
 export const SessionNode = memo(function SessionNode({
   data,
   selected,
+  allSessions = [],
 }: SessionNodeProps) {
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
@@ -43,6 +68,17 @@ export const SessionNode = memo(function SessionNode({
     const id = setInterval(() => setTick((t) => t + 1), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Get session type info for moltbot identification
+  const sessionTypeInfo = useMemo(() => {
+    // If no allSessions provided, fall back to current session only
+    const sessions = allSessions.length > 0 ? allSessions : [data]
+    return getSessionTypeInfo(data, sessions)
+  }, [data, allSessions])
+
+  const sessionColor = useMemo(() => {
+    return getDepthAdjustedColor(sessionTypeInfo.color, sessionTypeInfo.depth)
+  }, [sessionTypeInfo])
 
   // Detect if this is a subagent session by checking if platform is "subagent" or if key contains "subagent"
   const isSubagent = data.platform === 'subagent' || data.key.includes('subagent') || Boolean(data.spawnedBy)
@@ -67,17 +103,19 @@ export const SessionNode = memo(function SessionNode({
       className={`
         px-4 py-3 rounded-lg border-2 min-w-[180px]
         bg-shell-900 text-white
-        ${selected ? 'border-crab-500' : 'border-shell-600'}
+        ${selected ? 'border-crab-500' : ''}
         ${data.status === 'thinking' ? 'border-neon-peach' : ''}
-        ${isSubagent ? 'border-neon-cyan border-opacity-50' : ''}
         transition-all duration-150 hover:bg-shell-800
       `}
       style={{
+        borderColor: selected 
+          ? '#ef4444'
+          : data.status === 'thinking'
+          ? undefined
+          : sessionColor,
         boxShadow: selected
           ? '0 0 20px rgba(239, 68, 68, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3)'
-          : isSubagent
-          ? '0 0 12px rgba(0, 255, 213, 0.2), 0 4px 12px rgba(0, 0, 0, 0.3)'
-          : '0 4px 12px rgba(0, 0, 0, 0.3)',
+          : `0 0 12px ${sessionColor}40, 0 4px 12px rgba(0, 0, 0, 0.3)`,
       }}
     >
       <Handle type="target" position={Position.Top} className="bg-crab-500! w-3! h-3! border-2! border-shell-900!" />
@@ -120,6 +158,15 @@ export const SessionNode = memo(function SessionNode({
           </button>
           <StatusIndicator status={data.status} size="sm" />
         </div>
+      </div>
+
+      {/* Session Type Badge */}
+      <div className="mb-2">
+        <SessionBadge
+          emoji={sessionTypeInfo.badgeEmoji}
+          text={sessionTypeInfo.badgeText}
+          color={sessionColor}
+        />
       </div>
 
       <div className="flex items-center gap-2 mb-2">
