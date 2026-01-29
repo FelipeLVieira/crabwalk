@@ -273,6 +273,10 @@ export function addAction(action: MonitorAction) {
         if (sessionKey && sessionKey !== 'lifecycle') {
           draft.sessionKey = sessionKey
         }
+        // Copy final content from complete event if present
+        if (action.content) {
+          draft.content = action.content
+        }
         // Copy metadata from complete event
         if (action.inputTokens !== undefined) draft.inputTokens = action.inputTokens
         if (action.outputTokens !== undefined) draft.outputTokens = action.outputTokens
