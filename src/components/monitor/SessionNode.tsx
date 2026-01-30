@@ -5,11 +5,11 @@ import { Users, User, Clock, Copy, Check } from 'lucide-react'
 import { StatusIndicator } from './StatusIndicator'
 import type { MonitorSession } from '~/integrations/clawdbot'
 import { getSessionTypeInfo, getDepthAdjustedColor } from '~/lib/session-type-detection'
+import { useSessions } from './SessionsContext'
 
 interface SessionNodeProps {
   data: MonitorSession
   selected?: boolean
-  allSessions?: MonitorSession[]
 }
 
 interface SessionBadgeProps {
@@ -59,10 +59,10 @@ function formatRelativeTime(timestamp: number): string {
 export const SessionNode = memo(function SessionNode({
   data,
   selected,
-  allSessions = [],
 }: SessionNodeProps) {
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
+  const allSessions = useSessions()
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000)
