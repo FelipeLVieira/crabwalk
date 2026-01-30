@@ -2,6 +2,8 @@ import { initTRPC } from '@trpc/server'
 import { observable } from '@trpc/server/observable'
 import superjson from 'superjson'
 import { z } from 'zod'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { getClawdbotClient } from '~/integrations/clawdbot/client'
 import { getPersistenceService } from '~/integrations/clawdbot/persistence'
 import {
@@ -11,6 +13,8 @@ import {
   type MonitorAction,
   type MonitorExecEvent,
 } from '~/integrations/clawdbot'
+
+const execAsync = promisify(exec)
 
 // Server-side debug mode state
 let debugMode = false
@@ -216,6 +220,137 @@ const clawdbotRouter = router({
   }),
 })
 
+// Helper to run SSH commands on Mac Mini
+async function sshMacMini(command: string, timeoutMs = 10000): Promise<{ stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execAsync(
+      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no felipemacmini@felipes-mac-mini.local "${command}"`,
+      { timeout: timeoutMs }
+    )
+    return { stdout, stderr }
+  } catch (error) {
+    const err = error as { stdout?: string; stderr?: string; message?: string }
+    return { stdout: err.stdout ?? '', stderr: err.stderr ?? err.message ?? 'SSH failed' }
+  }
+}
+
+// Parse JSON safely
+function safeJsonParse<T>(str: string, fallback: T): T {
+  try {
+    return JSON.parse(str) as T
+  } catch {
+    return fallback
+  }
+}
+
+// Unified router for multi-gateway dashboard
+const unifiedRouter = router({
+  // Fetch status from both gateways
+  status: publicProcedure.query(async () => {
+    // Fetch Mac Mini data via SSH
+    const [macMiniStatus, macMiniCrons] = await Promise.all([
+      sshMacMini('clawdbot status --json 2>/dev/null'),
+      sshMacMini('clawdbot cron list --json 2>/dev/null'),
+    ])
+
+    // Parse Mac Mini responses
+    const macMiniStatusData = safeJsonParse(macMiniStatus.stdout, null)
+    const macMiniCronsData = safeJsonParse(macMiniCrons.stdout, { jobs: [] })
+
+    // Get local MacBook data via exec
+    let macbookStatusData = null
+    let macbookCronsData = { jobs: [] }
+    try {
+      const { stdout: localStatus } = await execAsync('clawdbot status --json 2>/dev/null', { timeout: 5000 })
+      macbookStatusData = safeJsonParse(localStatus, null)
+    } catch { /* ignore */ }
+    try {
+      const { stdout: localCrons } = await execAsync('clawdbot cron list --json 2>/dev/null', { timeout: 5000 })
+      macbookCronsData = safeJsonParse(localCrons, { jobs: [] })
+    } catch { /* ignore */ }
+
+    return {
+      timestamp: Date.now(),
+      gateways: {
+        macbook: {
+          name: 'MacBook Pro',
+          host: 'local',
+          status: macbookStatusData,
+          crons: macbookCronsData,
+          online: macbookStatusData !== null,
+        },
+        macmini: {
+          name: 'Mac Mini',
+          host: 'felipes-mac-mini.local',
+          status: macMiniStatusData,
+          crons: macMiniCronsData,
+          online: macMiniStatusData !== null,
+        },
+      },
+    }
+  }),
+
+  // Fetch all cron jobs from both gateways
+  crons: publicProcedure.query(async () => {
+    const [macMiniCrons, localCrons] = await Promise.all([
+      sshMacMini('clawdbot cron list --json 2>/dev/null'),
+      execAsync('clawdbot cron list --json 2>/dev/null', { timeout: 5000 }).catch(() => ({ stdout: '{"jobs":[]}' })),
+    ])
+
+    const macMiniJobs = safeJsonParse<{ jobs: unknown[] }>(macMiniCrons.stdout, { jobs: [] }).jobs.map(j => ({
+      ...(j as object),
+      gateway: 'macmini',
+      gatewayName: 'Mac Mini',
+    }))
+
+    const macbookJobs = safeJsonParse<{ jobs: unknown[] }>(localCrons.stdout, { jobs: [] }).jobs.map(j => ({
+      ...(j as object),
+      gateway: 'macbook',
+      gatewayName: 'MacBook Pro',
+    }))
+
+    return {
+      timestamp: Date.now(),
+      jobs: [...macbookJobs, ...macMiniJobs],
+      counts: {
+        macbook: macbookJobs.length,
+        macmini: macMiniJobs.length,
+        total: macbookJobs.length + macMiniJobs.length,
+      },
+    }
+  }),
+
+  // Fetch all sessions from both gateways
+  sessions: publicProcedure.query(async () => {
+    const [macMiniSessions, localSessions] = await Promise.all([
+      sshMacMini('clawdbot sessions list --json 2>/dev/null'),
+      execAsync('clawdbot sessions list --json 2>/dev/null', { timeout: 5000 }).catch(() => ({ stdout: '{"sessions":[]}' })),
+    ])
+
+    const macMiniData = safeJsonParse<{ sessions: unknown[] }>(macMiniSessions.stdout, { sessions: [] }).sessions.map(s => ({
+      ...(s as object),
+      gateway: 'macmini',
+      gatewayName: 'Mac Mini',
+    }))
+
+    const macbookData = safeJsonParse<{ sessions: unknown[] }>(localSessions.stdout, { sessions: [] }).sessions.map(s => ({
+      ...(s as object),
+      gateway: 'macbook',
+      gatewayName: 'MacBook Pro',
+    }))
+
+    return {
+      timestamp: Date.now(),
+      sessions: [...macbookData, ...macMiniData],
+      counts: {
+        macbook: macbookData.length,
+        macmini: macMiniData.length,
+        total: macbookData.length + macMiniData.length,
+      },
+    }
+  }),
+})
+
 export const appRouter = router({
   hello: publicProcedure
     .input(z.object({ name: z.string().optional() }))
@@ -232,6 +367,7 @@ export const appRouter = router({
   }),
 
   clawdbot: clawdbotRouter,
+  unified: unifiedRouter,
 })
 
 export type AppRouter = typeof appRouter
