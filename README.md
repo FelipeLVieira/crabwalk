@@ -1,6 +1,6 @@
 # 🦀 Crabwalk
 
-Real-time companion monitor for [Moltbot (Clawdbot)](https://github.com/moltbot/moltbot) agents by [@luccasveg](https://x.com/luccasveg).
+Real-time companion monitor for [OpenClaw (Clawdbot)](https://github.com/openclaw/openclaw) agents by [@luccasveg](https://x.com/luccasveg).
 
 Watch your AI agents work across WhatsApp, Telegram, Discord, and Slack in a live node graph. See thinking states, tool calls, and response chains as they happen.
 
@@ -28,9 +28,9 @@ docker run -d \
   ghcr.io/luccast/crabwalk:latest
 ```
 
-> Note: When running Crabwalk in Docker, the Moltbot gateway typically runs on the _host_.
+> Note: When running Crabwalk in Docker, the OpenClaw gateway typically runs on the _host_.
 > Use `CLAWDBOT_URL=ws://host.docker.internal:18789` so the container can connect.
-> If you're running Moltbot with `bind: loopback` and `tailscale serve` for secure tailnet-only access, you'll need to run the crabwalk container with host networking - replace `p:3000:3000` with `--network host`
+> If you're running OpenClaw with `bind: loopback` and `tailscale serve` for secure tailnet-only access, you'll need to run the crabwalk container with host networking - replace `p:3000:3000` with `--network host`
 > This allows the container to reach 127.0.0.1:18789 while maintaining the security benefits of loopback-only binding.
 
 Or with docker-compose:
@@ -55,7 +55,7 @@ Open `http://localhost:3000/monitor`
 
 ## Configuration
 
-Requires clawdbot gateway running on the same machine.
+Requires OpenClaw gateway running on the same machine.
 
 ### Gateway Token
 
