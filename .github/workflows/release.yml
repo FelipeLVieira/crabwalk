@@ -22,7 +22,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
 
       - name: Create build artifact
         run: |
-          tar -czvf crabwalk-${{ github.ref_name }}.tar.gz dist
+          tar -czvf crabwalk-${{ github.ref_name }}.tar.gz .output
 
       - name: Upload build to release
         uses: softprops/action-gh-release@v1

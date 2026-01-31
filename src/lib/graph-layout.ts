@@ -31,11 +31,18 @@ const COLUMN_GAP = 400        // Horizontal gap between session columns
 const ROW_GAP = 80            // Vertical gap between items in a column
 const SPAWN_OFFSET = 60       // Extra Y offset when spawning to right
 const CRAB_OFFSET = { x: -120, y: -100 }
+const ROOT_START_Y = 200      // Vertical offset from crab to first root session
 const MIN_SESSION_GAP = 120   // Minimum vertical gap between sessions in same column
+const ROOT_HORIZONTAL_GAP = 0 // Gap between root sessions in horizontal mode
+
+// Cache spawn Y positions so they don't change as parent actions accumulate
+// Key: session key, Value: calculated spawn Y offset
+const spawnYCache = new Map<string, number>()
 
 interface SessionColumn {
   sessionKey: string
   columnIndex: number
+  rootIndex: number  // Which root tree this session belongs to (for horizontal mode)
   spawnY: number  // Y position where this session was spawned from parent
   items: Array<{
     nodeId: string
@@ -45,53 +52,20 @@ interface SessionColumn {
   }>
 }
 
-interface NodeBounds {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 /**
- * Check if two node bounding boxes overlap (with padding)
- */
-function checkCollision(a: NodeBounds, b: NodeBounds, padding = 0): boolean {
-  return !(
-    a.x + a.width + padding < b.x ||
-    b.x + b.width + padding < a.x ||
-    a.y + a.height + padding < b.y ||
-    b.y + b.height + padding < a.y
-  )
-}
-
-/**
- * Check if a position would cause collision with existing nodes
- */
-function hasCollision(
-  x: number,
-  y: number,
-  dims: { width: number; height: number },
-  existingNodes: Array<{ x: number; y: number; dims: { width: number; height: number } }>,
-  padding = 0
-): boolean {
-  const candidate = { x, y, width: dims.width, height: dims.height }
-  return existingNodes.some(node => 
-    checkCollision(candidate, { x: node.x, y: node.y, width: node.dims.width, height: node.dims.height }, padding)
-  )
-}
-
-/**
- * Radial layout algorithm:
- * - Central crab at the origin (0, 0)
- * - Sessions distributed in a circle around the crab
- * - Events within a session flow radially outward from center
- * - Child sessions nest near their parent session
+ * Layout algorithm:
+ * - Vertical (TB): All roots in column 0, subagents spawn to the right based on depth
+ * - Horizontal (LR): Each root gets its own column group, subagents spawn further right
+ * - Subagents positioned at the Y-level where they were spawned (timeline style)
  */
 export function layoutGraph(
   nodes: Node[],
   edges: Edge[],
-  _options: LayoutOptions = {}
+  options: LayoutOptions = {}
 ): { nodes: Node[]; edges: Edge[] } {
+  const direction = options.direction ?? 'LR'
+  const isHorizontal = direction === 'LR' || direction === 'RL'
+
   // Build session hierarchy and columns
   const sessions = nodes
     .filter((n) => n.type === 'session')
@@ -107,15 +81,45 @@ export function layoutGraph(
 
   const crabNode = nodes.find((n) => n.type === 'crab')
 
-  // Radial layout constants - increased for better spacing
-  const BASE_RADIUS = 500 // Distance from crab for main sessions
-  const CHILD_OFFSET = 350 // Offset for child sessions from their parent
-  const RADIAL_SPACING = 160 // Space between items radiating outward
-  const MIN_SIBLING_ANGLE = 0.4 // ~23° minimum angle between siblings (radians)
-  const COLLISION_PADDING = 40 // Extra padding for collision detection
+  // Build session column map - which column is each session in?
+  const sessionColumns = new Map<string, SessionColumn>()
+  const columnOccupancy = new Map<number, number>() // columnIndex -> maxY used
 
-  // Build session hierarchy - organize sessions by their depth
-  const sessionDepth = new Map<string, number>()
+  // Find root sessions and build root index map
+  const rootSessions: MonitorSession[] = []
+  const sessionToRoot = new Map<string, number>() // sessionKey -> rootIndex
+
+  // First identify all roots
+  for (const session of sessions) {
+    if (!session.spawnedBy || !sessions.find(s => s.key === session.spawnedBy)) {
+      rootSessions.push(session)
+    }
+  }
+  // Sort by session key for stable ordering - lastActivityAt changes during streaming
+  // which would cause nodes to swap positions
+  rootSessions.sort((a, b) => a.key.localeCompare(b.key))
+
+  // Assign root index to each root
+  rootSessions.forEach((root, idx) => sessionToRoot.set(root.key, idx))
+
+  // Find root for any session by walking up the spawn chain
+  const findRootIndex = (sessionKey: string, visited = new Set<string>()): number => {
+    if (visited.has(sessionKey)) return 0
+    visited.add(sessionKey)
+
+    if (sessionToRoot.has(sessionKey)) {
+      return sessionToRoot.get(sessionKey)!
+    }
+
+    const session = sessions.find((s) => s.key === sessionKey)
+    if (!session || !session.spawnedBy) return 0
+
+    const rootIdx = findRootIndex(session.spawnedBy, visited)
+    sessionToRoot.set(sessionKey, rootIdx)
+    return rootIdx
+  }
+
+  // Determine column for each session based on spawn hierarchy
   const getSessionDepth = (sessionKey: string, visited = new Set<string>()): number => {
     if (visited.has(sessionKey)) return 0
     visited.add(sessionKey)
@@ -129,28 +133,15 @@ export function layoutGraph(
     return 0
   }
 
-  // Assign depth to all sessions
+  // Assign columns to all sessions
   for (const session of sessions) {
     const depth = getSessionDepth(session.key)
-    sessionDepth.set(session.key, depth)
-  }
-
-  // Group sessions by depth level
-  const sessionsByDepth = new Map<number, MonitorSession[]>()
-  for (const session of sessions) {
-    const depth = sessionDepth.get(session.key) ?? 0
-    const group = sessionsByDepth.get(depth) ?? []
-    group.push(session)
-    sessionsByDepth.set(depth, group)
-  }
-
-  // Build session items map (session node + actions + execs)
-  const sessionItems = new Map<string, SessionColumn>()
-  for (const session of sessions) {
-    sessionItems.set(session.key, {
+    const rootIndex = findRootIndex(session.key)
+    sessionColumns.set(session.key, {
       sessionKey: session.key,
-      columnIndex: sessionDepth.get(session.key) ?? 0,
-      spawnY: 0,
+      columnIndex: depth,
+      rootIndex,
+      spawnY: depth === 0 ? ROOT_START_Y : 0,  // Root sessions start below crab
       items: [],
     })
   }
@@ -185,11 +176,11 @@ export function layoutGraph(
 
   // Build items list for each session (session node + actions + execs)
   for (const session of sessions) {
-    const items = sessionItems.get(session.key)
-    if (!items) continue
+    const col = sessionColumns.get(session.key)
+    if (!col) continue
 
     // Add session node itself
-    items.items.push({
+    col.items.push({
       nodeId: `session-${session.key}`,
       type: 'session',
       timestamp: session.lastActivityAt ?? 0,
@@ -199,7 +190,7 @@ export function layoutGraph(
     // Add actions
     const sessionActions = actionsBySession.get(session.key) ?? []
     for (const action of sessionActions) {
-      items.items.push({
+      col.items.push({
         nodeId: `action-${action.id}`,
         type: 'action',
         timestamp: action.data.timestamp,
@@ -210,7 +201,7 @@ export function layoutGraph(
     // Add execs
     const sessionExecs = execsBySession.get(session.key) ?? []
     for (const exec of sessionExecs) {
-      items.items.push({
+      col.items.push({
         nodeId: `exec-${exec.id}`,
         type: 'exec',
         timestamp: exec.data.startedAt,
@@ -219,165 +210,177 @@ export function layoutGraph(
     }
 
     // Sort all items by timestamp (session node first since it's the start)
-    items.items.sort((a, b) => {
+    col.items.sort((a, b) => {
       if (a.type === 'session') return -1
       if (b.type === 'session') return 1
       return a.timestamp - b.timestamp
     })
   }
 
-  // Position all nodes using radial layout
+  // Calculate spawn Y positions for child sessions
+  // When a session is spawned, find the Y position of the parent at that time
+  // Cache these values so they don't jitter as parent actions accumulate
+  for (const session of sessions) {
+    if (!session.spawnedBy) continue
+
+    const parentCol = sessionColumns.get(session.spawnedBy)
+    const childCol = sessionColumns.get(session.key)
+    if (!parentCol || !childCol) continue
+
+    // Use cached spawn Y if available (prevents jitter from recalculation)
+    const cachedSpawnY = spawnYCache.get(session.key)
+    if (cachedSpawnY !== undefined) {
+      childCol.spawnY = cachedSpawnY
+      continue
+    }
+
+    // Find the approximate position in parent where spawn happened
+    // Use the child's creation time (approximated by first action time or session activity)
+    const childActions = actionsBySession.get(session.key) ?? []
+    const childCreationTime = childActions[0]?.data.timestamp ?? session.lastActivityAt ?? Date.now()
+
+    // Count how many items in parent were before this spawn
+    let parentItemsBeforeSpawn = 0
+    for (const item of parentCol.items) {
+      if (item.type === 'session') {
+        parentItemsBeforeSpawn++
+        continue
+      }
+      if (item.timestamp <= childCreationTime) {
+        parentItemsBeforeSpawn++
+      }
+    }
+
+    // Calculate Y based on parent's item count and cache it
+    const calculatedSpawnY = parentItemsBeforeSpawn * (NODE_DIMENSIONS.action.height + ROW_GAP) + SPAWN_OFFSET
+    spawnYCache.set(session.key, calculatedSpawnY)
+    childCol.spawnY = calculatedSpawnY
+  }
+
+  // Position all nodes
   const positionedNodes: Node[] = []
   const positionedNodeIds = new Set<string>()
 
-  // Position crab node at the center
+  // Position crab node
   if (crabNode) {
     positionedNodes.push({
       ...crabNode,
-      position: { x: 0, y: 0 },
+      position: { x: CRAB_OFFSET.x, y: CRAB_OFFSET.y },
     })
     positionedNodeIds.add(crabNode.id)
   }
 
-  // Track session positions for child placement
-  const sessionPositions = new Map<string, { x: number; y: number; angle: number }>()
+  // Track column usage for collision avoidance
+  // In horizontal mode, we track per (rootIndex, columnIndex)
+  // In vertical mode, we track per columnIndex only
+  const columnRanges = new Map<string, Array<{ startY: number; endY: number }>>()
 
-  // Track positioned nodes for collision detection
-  const positionedNodeBounds: Array<{ x: number; y: number; dims: { width: number; height: number } }> = []
+  const getColumnKey = (rootIndex: number, columnIndex: number): string => {
+    return isHorizontal ? `${rootIndex}-${columnIndex}` : `${columnIndex}`
+  }
 
-  // Position root sessions (depth 0) in a circle around the crab
-  const rootSessions = sessionsByDepth.get(0) ?? []
-  const angleStep = (2 * Math.PI) / Math.max(rootSessions.length, 1)
-  
-  for (let i = 0; i < rootSessions.length; i++) {
-    const session = rootSessions[i]!
-    const angle = i * angleStep - Math.PI / 2 // Start from top, go clockwise
-    const baseX = Math.cos(angle) * BASE_RADIUS
-    const baseY = Math.sin(angle) * BASE_RADIUS
-    
-    sessionPositions.set(session.key, { x: baseX, y: baseY, angle })
-    
-    // Position all items in this session, radiating outward
-    const items = sessionItems.get(session.key)
-    if (!items) continue
-    
-    let currentRadius = 0
-    for (const item of items.items) {
-      const dims = NODE_DIMENSIONS[item.type]
-      
-      // Position along the radial direction from center
-      let itemX = baseX + Math.cos(angle) * currentRadius
-      let itemY = baseY + Math.sin(angle) * currentRadius
-      
-      // Collision avoidance: if this position overlaps, increase radius slightly
-      let radiusAdjustment = 0
-      while (hasCollision(itemX, itemY, dims, positionedNodeBounds, COLLISION_PADDING) && radiusAdjustment < 500) {
-        radiusAdjustment += 30
-        const adjustedRadius = currentRadius + radiusAdjustment
-        itemX = baseX + Math.cos(angle) * adjustedRadius
-        itemY = baseY + Math.sin(angle) * adjustedRadius
+  // Get X position for a session
+  const getColumnX = (rootIndex: number, columnIndex: number): number => {
+    if (isHorizontal) {
+      // Each root tree gets its own horizontal space
+      // Root at rootIndex * (maxDepth * COLUMN_GAP + ROOT_HORIZONTAL_GAP)
+      // Plus columnIndex * COLUMN_GAP for depth within tree
+      const maxDepth = Math.max(...Array.from(sessionColumns.values()).map(c => c.columnIndex)) + 1
+      const treeWidth = maxDepth * COLUMN_GAP
+      return rootIndex * (treeWidth + ROOT_HORIZONTAL_GAP) + columnIndex * COLUMN_GAP
+    } else {
+      // Vertical: all sessions at same depth share X
+      return columnIndex * COLUMN_GAP
+    }
+  }
+
+  // Adjust spawn Y to avoid collisions with existing sessions in same column
+  const adjustSpawnY = (rootIndex: number, columnIndex: number, desiredY: number, itemCount: number): number => {
+    const key = getColumnKey(rootIndex, columnIndex)
+    const ranges = columnRanges.get(key) ?? []
+    const estimatedHeight = itemCount * (NODE_DIMENSIONS.action.height + ROW_GAP) + MIN_SESSION_GAP
+
+    let adjustedY = desiredY
+
+    // Check for overlaps and shift down if needed
+    for (const range of ranges) {
+      if (adjustedY < range.endY && (adjustedY + estimatedHeight) > range.startY) {
+        adjustedY = range.endY + MIN_SESSION_GAP
       }
-      
+    }
+
+    // Record our range
+    ranges.push({ startY: adjustedY, endY: adjustedY + estimatedHeight })
+    columnRanges.set(key, ranges)
+
+    return adjustedY
+  }
+
+  // Sort sessions by column index (process column 0 first, then 1, etc.)
+  // This ensures parent sessions are positioned before children
+  const sortedSessionKeys = Array.from(sessionColumns.keys()).sort((a, b) => {
+    const colA = sessionColumns.get(a)!
+    const colB = sessionColumns.get(b)!
+    // First by root index (in horizontal mode)
+    if (isHorizontal && colA.rootIndex !== colB.rootIndex) {
+      return colA.rootIndex - colB.rootIndex
+    }
+    // Then by column index (depth)
+    if (colA.columnIndex !== colB.columnIndex) {
+      return colA.columnIndex - colB.columnIndex
+    }
+    // Within same column, sort by spawn Y (earlier spawns first)
+    return colA.spawnY - colB.spawnY
+  })
+
+  // Position each session's column
+  for (const sessionKey of sortedSessionKeys) {
+    const col = sessionColumns.get(sessionKey)!
+    const columnX = getColumnX(col.rootIndex, col.columnIndex)
+
+    // Adjust Y position to avoid collisions with other sessions in same column
+    const adjustedY = adjustSpawnY(col.rootIndex, col.columnIndex, col.spawnY, col.items.length)
+    let currentY = adjustedY
+
+    for (const item of col.items) {
+      const dims = NODE_DIMENSIONS[item.type]
+
       positionedNodes.push({
         id: item.nodeId,
         type: item.type,
-        position: { x: itemX, y: itemY },
+        position: { x: columnX, y: currentY },
         data: nodeData(item.data),
       })
       positionedNodeIds.add(item.nodeId)
-      positionedNodeBounds.push({ x: itemX, y: itemY, dims })
-      
-      currentRadius += dims.height + RADIAL_SPACING + radiusAdjustment
-    }
-  }
 
-  // Position child sessions near their parent
-  for (let depth = 1; depth <= Math.max(...sessionDepth.values()); depth++) {
-    const sessionsAtDepth = sessionsByDepth.get(depth) ?? []
-    
-    for (const session of sessionsAtDepth) {
-      const parent = sessions.find(s => s.key === session.spawnedBy)
-      if (!parent) continue
-      
-      const parentPos = sessionPositions.get(parent.key)
-      if (!parentPos) continue
-      
-      // Find siblings (other children of the same parent)
-      const siblings = sessionsAtDepth.filter(s => s.spawnedBy === parent.key)
-      const siblingIndex = siblings.indexOf(session)
-      const siblingCount = siblings.length
-      
-      // Spread children around the parent's radial direction
-      // Ensure minimum angular separation between siblings
-      const minAngularSpread = MIN_SIBLING_ANGLE * siblingCount
-      const angularSpread = Math.max(Math.PI / 3, minAngularSpread) // At least 60° or calculated minimum
-      const siblingAngleOffset = siblingCount > 1 
-        ? (siblingIndex - (siblingCount - 1) / 2) * (angularSpread / siblingCount)
-        : 0
-      
-      let childAngle = parentPos.angle + siblingAngleOffset
-      let childX = parentPos.x + Math.cos(childAngle) * CHILD_OFFSET
-      let childY = parentPos.y + Math.sin(childAngle) * CHILD_OFFSET
-      
-      // Collision avoidance for session position
-      const sessionDims = NODE_DIMENSIONS.session
-      let offsetAdjustment = 0
-      while (hasCollision(childX, childY, sessionDims, positionedNodeBounds, COLLISION_PADDING) && offsetAdjustment < 300) {
-        offsetAdjustment += 50
-        const adjustedOffset = CHILD_OFFSET + offsetAdjustment
-        childX = parentPos.x + Math.cos(childAngle) * adjustedOffset
-        childY = parentPos.y + Math.sin(childAngle) * adjustedOffset
-      }
-      
-      sessionPositions.set(session.key, { x: childX, y: childY, angle: childAngle })
-      
-      // Position all items in this child session
-      const items = sessionItems.get(session.key)
-      if (!items) continue
-      
-      let currentRadius = 0
-      for (const item of items.items) {
-        const dims = NODE_DIMENSIONS[item.type]
-        
-        let itemX = childX + Math.cos(childAngle) * currentRadius
-        let itemY = childY + Math.sin(childAngle) * currentRadius
-        
-        // Collision avoidance: if this position overlaps, increase radius
-        let radiusAdjustment = 0
-        while (hasCollision(itemX, itemY, dims, positionedNodeBounds, COLLISION_PADDING) && radiusAdjustment < 500) {
-          radiusAdjustment += 30
-          const adjustedRadius = currentRadius + radiusAdjustment
-          itemX = childX + Math.cos(childAngle) * adjustedRadius
-          itemY = childY + Math.sin(childAngle) * adjustedRadius
-        }
-        
-        positionedNodes.push({
-          id: item.nodeId,
-          type: item.type,
-          position: { x: itemX, y: itemY },
-          data: nodeData(item.data),
-        })
-        positionedNodeIds.add(item.nodeId)
-        positionedNodeBounds.push({ x: itemX, y: itemY, dims })
-        
-        currentRadius += dims.height + RADIAL_SPACING + radiusAdjustment
-      }
+      currentY += dims.height + ROW_GAP
     }
+
+    // Track max Y for this column
+    columnOccupancy.set(col.columnIndex, Math.max(
+      columnOccupancy.get(col.columnIndex) ?? 0,
+      currentY
+    ))
   }
 
   // Handle orphan nodes (actions/execs without a session)
-  let orphanAngle = 0
-  const orphanRadius = BASE_RADIUS + 300
+  let orphanY = Math.max(...Array.from(columnOccupancy.values()), 0) + 100
   for (const node of nodes) {
     if (!positionedNodeIds.has(node.id)) {
       const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] ?? { width: 180, height: 80 }
-      const x = Math.cos(orphanAngle) * orphanRadius
-      const y = Math.sin(orphanAngle) * orphanRadius
       positionedNodes.push({
         ...node,
-        position: { x, y },
+        position: { x: -200, y: orphanY },
       })
-      orphanAngle += Math.PI / 6 // 30 degrees apart
+      orphanY += dims.height + ROW_GAP
+    }
+  }
+
+  // Clean up spawn Y cache for sessions that no longer exist
+  const currentSessionKeys = new Set(sessions.map(s => s.key))
+  for (const key of spawnYCache.keys()) {
+    if (!currentSessionKeys.has(key)) {
+      spawnYCache.delete(key)
     }
   }
 

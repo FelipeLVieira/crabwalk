@@ -12,12 +12,13 @@ import {
 // Track runId → sessionKey mapping (learned from chat events)
 const runSessionMap = new Map<string, string>()
 
-// Track recent activity on parent (non-subagent) sessions for spawn inference
-// Maps sessionKey → lastActivityTimestamp
-const parentSessionActivity = new Map<string, number>()
+// Track recent parent session actions with precise timestamps
+// Stores the last few action timestamps per parent session
+const parentActionHistory = new Map<string, number[]>()
+const MAX_ACTION_HISTORY = 10
 
-// Time window for spawn inference - parent must have been active within this window
-const SPAWN_INFERENCE_WINDOW_MS = 5000
+// Time window for spawn inference
+const SPAWN_INFERENCE_WINDOW_MS = 10000
 
 function isSubagentSession(key: string): boolean {
   return key.includes('subagent')
@@ -27,31 +28,58 @@ function isParentSession(key: string): boolean {
   return !isSubagentSession(key) && !key.includes('lifecycle')
 }
 
-// Infer which parent session spawned this subagent based on recent activity
+// Track an action on a parent session with its timestamp
+function trackParentAction(sessionKey: string, timestamp?: number) {
+  if (!isParentSession(sessionKey)) return
+  const ts = timestamp ?? Date.now()
+
+  let history = parentActionHistory.get(sessionKey)
+  if (!history) {
+    history = []
+    parentActionHistory.set(sessionKey, history)
+  }
+
+  history.push(ts)
+
+  // Keep only recent entries
+  if (history.length > MAX_ACTION_HISTORY) {
+    history.shift()
+  }
+}
+
+// Infer which parent session spawned this subagent
+// Finds the parent with the most recent action before the subagent's timestamp
 function inferSpawnedBy(subagentKey: string, timestamp?: number): string | undefined {
   if (!isSubagentSession(subagentKey)) return undefined
 
-  const now = timestamp ?? Date.now()
+  const subagentTime = timestamp ?? Date.now()
+  const cutoff = subagentTime - SPAWN_INFERENCE_WINDOW_MS
+
   let bestParent: string | undefined
   let bestTime = 0
 
-  for (const [parentKey, activityTime] of parentSessionActivity) {
-    // Must be within inference window
-    if (now - activityTime > SPAWN_INFERENCE_WINDOW_MS) continue
-    // Pick most recently active parent
-    if (activityTime > bestTime) {
-      bestTime = activityTime
-      bestParent = parentKey
+  for (const [parentKey, history] of parentActionHistory) {
+    // Find the most recent action from this parent that's before the subagent time
+    for (let i = history.length - 1; i >= 0; i--) {
+      const actionTime = history[i]!
+      // Must be before subagent appeared and within window
+      if (actionTime <= subagentTime && actionTime >= cutoff) {
+        if (actionTime > bestTime) {
+          bestTime = actionTime
+          bestParent = parentKey
+        }
+        break // Found the most recent valid action for this parent
+      }
     }
   }
 
-  return bestParent
-}
+  if (bestParent) {
+    console.log(`[spawn] linked ${subagentKey} to ${bestParent} (action ${subagentTime - bestTime}ms before)`)
+  } else {
+    console.log(`[spawn] could not infer parent for ${subagentKey}`)
+  }
 
-// Track activity on a parent session
-function trackParentActivity(sessionKey: string, timestamp?: number) {
-  if (!isParentSession(sessionKey)) return
-  parentSessionActivity.set(sessionKey, timestamp ?? Date.now())
+  return bestParent
 }
 
 export const sessionsCollection = createCollection(
@@ -164,11 +192,6 @@ function createPlaceholderExec(event: MonitorExecEvent, sessionKey?: string): Mo
 
 // Helper to update or insert session
 export function upsertSession(session: MonitorSession) {
-  // Track activity on parent sessions
-  if (isParentSession(session.key)) {
-    trackParentActivity(session.key, session.lastActivityAt)
-  }
-
   const existing = sessionsCollection.state.get(session.key)
 
   if (existing) {
@@ -194,10 +217,9 @@ export function upsertSession(session: MonitorSession) {
 }
 
 // Helper to add or update action
-// Aggregation strategy per run:
-// - start: one node per runId (appears immediately)
-// - streaming: aggregate all deltas into one node (content updates)
-// - complete: updates streaming node with final state & metadata
+// Unified node lifecycle per runId:
+// - start/streaming/complete/error/aborted all update the same node
+// - Node type reflects current state in the lifecycle
 // - tool_call/tool_result: separate nodes
 export function addAction(action: MonitorAction) {
   // Learn runId → sessionKey mapping from actions with real session keys
@@ -208,9 +230,9 @@ export function addAction(action: MonitorAction) {
       backfillExecSessionKey(action.runId, action.sessionKey)
     }
 
-    // Track activity on parent sessions for spawn inference
+    // Track parent session actions for spawn inference
     if (isParentSession(action.sessionKey)) {
-      trackParentActivity(action.sessionKey, action.timestamp)
+      trackParentAction(action.sessionKey, action.timestamp)
     }
   }
 
@@ -220,73 +242,49 @@ export function addAction(action: MonitorAction) {
     sessionKey = runSessionMap.get(action.runId) || sessionKey
   }
 
-  // Handle 'start' type - create dedicated start node
-  if (action.type === 'start') {
-    const startId = `${action.runId}-start`
-    const existing = actionsCollection.state.get(startId)
-    if (!existing) {
-      actionsCollection.insert({
-        ...action,
-        id: startId,
-        sessionKey,
-      })
-    }
-    return
-  }
+  // Unified node lifecycle: start → streaming → complete/error/aborted
+  // All states for the same runId share one node ID
+  const actionNodeId = `${action.runId}-action`
 
-  // For streaming, aggregate into single node per runId
-  if (action.type === 'streaming') {
-    const streamingId = `${action.runId}-stream`
-    const existing = actionsCollection.state.get(streamingId)
+  // Handle start, streaming, complete, error, aborted - all update the same node
+  if (['start', 'streaming', 'complete', 'error', 'aborted'].includes(action.type)) {
+    const existing = actionsCollection.state.get(actionNodeId)
+
     if (existing) {
-      // Replace content (gateway sends cumulative text, not incremental deltas)
-      actionsCollection.update(streamingId, (draft) => {
-        if (action.content) {
-          draft.content = action.content
-        }
-        draft.seq = action.seq
-        draft.timestamp = action.timestamp
-        if (sessionKey && sessionKey !== 'lifecycle') {
-          draft.sessionKey = sessionKey
-        }
-      })
-    } else {
-      // Create new streaming action
-      actionsCollection.insert({
-        ...action,
-        id: streamingId,
-        sessionKey,
-      })
-    }
-    return
-  }
-
-  // For complete/error/aborted, update the streaming action
-  if (action.type === 'complete' || action.type === 'error' || action.type === 'aborted') {
-    const streamingId = `${action.runId}-stream`
-    const streaming = actionsCollection.state.get(streamingId)
-    if (streaming) {
-      actionsCollection.update(streamingId, (draft) => {
+      actionsCollection.update(actionNodeId, (draft) => {
+        // Always update type to reflect current state
         draft.type = action.type
         draft.seq = action.seq
         draft.timestamp = action.timestamp
+
         if (sessionKey && sessionKey !== 'lifecycle') {
           draft.sessionKey = sessionKey
         }
-        // Copy metadata from complete event
+
+        // Update content if present
+        if (action.content) {
+          draft.content = action.content
+        }
+
+        // Copy metadata from complete/error events
         if (action.inputTokens !== undefined) draft.inputTokens = action.inputTokens
         if (action.outputTokens !== undefined) draft.outputTokens = action.outputTokens
         if (action.stopReason) draft.stopReason = action.stopReason
         if (action.endedAt) draft.endedAt = action.endedAt
+
         // Calculate duration if we have both timestamps
         if (draft.startedAt && action.endedAt) {
           draft.duration = action.endedAt - draft.startedAt
         }
       })
-      return
+    } else {
+      // Create new action node
+      actionsCollection.insert({
+        ...action,
+        id: actionNodeId,
+        sessionKey,
+      })
     }
-    // No streaming action found, create as-is with complete state
-    actionsCollection.insert({ ...action, sessionKey, id: `${action.runId}-complete` })
     return
   }
 
@@ -395,12 +393,6 @@ export function updateSessionStatus(
   status: MonitorSession['status']
 ) {
   const now = Date.now()
-
-  // Track activity on parent sessions
-  if (isParentSession(key)) {
-    trackParentActivity(key, now)
-  }
-
   const session = sessionsCollection.state.get(key)
   if (session) {
     sessionsCollection.update(key, (draft) => {
@@ -437,7 +429,7 @@ export function updateSession(key: string, update: Partial<MonitorSession>) {
 // Clear all data
 export function clearCollections() {
   runSessionMap.clear()
-  parentSessionActivity.clear()
+  parentActionHistory.clear()
   for (const session of sessionsCollection.state.values()) {
     sessionsCollection.delete(session.key)
   }
@@ -503,23 +495,24 @@ export function hydrateFromServer(
   // First clear existing data
   clearCollections()
 
-  // Replay actions first to build parent activity history
+  // Sort actions by timestamp for replay
   const sortedActions = [...actions].sort((a, b) => a.timestamp - b.timestamp)
+
+  // First pass: build parent action history for spawn inference
   for (const action of sortedActions) {
-    // Track parent activity without inserting actions yet
     if (action.sessionKey && isParentSession(action.sessionKey)) {
-      trackParentActivity(action.sessionKey, action.timestamp)
+      trackParentAction(action.sessionKey, action.timestamp)
     }
   }
 
   // Also track parent sessions by their lastActivityAt
   for (const session of sessions) {
     if (isParentSession(session.key)) {
-      trackParentActivity(session.key, session.lastActivityAt)
+      trackParentAction(session.key, session.lastActivityAt)
     }
   }
 
-  // Now insert all sessions - subagents will get inferred spawnedBy
+  // Insert all sessions - subagents will get inferred spawnedBy from Task tool calls
   for (const session of sessions) {
     if (isSubagentSession(session.key)) {
       const spawnedBy = session.spawnedBy || inferSpawnedBy(session.key, session.lastActivityAt)

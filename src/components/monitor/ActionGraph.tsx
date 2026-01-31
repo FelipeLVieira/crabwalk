@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -6,6 +6,8 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  useOnViewportChange,
   type Node,
   type Edge,
   type NodeTypes,
@@ -13,15 +15,13 @@ import {
   MarkerType,
   ReactFlowProvider,
 } from '@xyflow/react'
-import { LayoutGrid } from 'lucide-react'
+import { LayoutGrid, ArrowRightLeft, ArrowUpDown, Crosshair } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 import { SessionNode } from './SessionNode'
-import { SessionsProvider } from './SessionsContext'
 import { ActionNode } from './ActionNode'
 import { ExecNode } from './ExecNode'
 import { CrabNode } from './CrabNode'
 import { ChaserCrabNode, type ChaserCrabState } from './ChaserCrabNode'
-import { Legend } from './Legend'
 import { layoutGraph } from '~/lib/graph-layout'
 import type {
   MonitorSession,
@@ -57,7 +57,6 @@ const IDLE_PAUSE_MAX = 3000 // max ms to pause when idle
 const WANDER_CHANCE = 0.3 // 30% chance to wander after idle pause
 const SIDEWAYS_DRIFT = 0.4 // crabs scuttle sideways
 
-// Node types defined outside component to avoid React Flow warnings
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
   session: SessionNode as any,
@@ -99,6 +98,25 @@ function ActionGraphInner({
   const pinnedPositions = useRef<Map<string, { x: number; y: number }>>(new Map())
   const animationFrameRef = useRef<number>(undefined)
   const timeoutRef = useRef<NodeJS.Timeout>(undefined)
+
+  // Layout direction: LR = horizontal (sessions spawn right), TB = vertical (sessions stack down)
+  const [layoutDirection, setLayoutDirection] = useState<'LR' | 'TB'>('LR')
+
+  // Follow mode: auto-pan to new nodes
+  const [followMode, setFollowMode] = useState(false)
+  const isAnimatingRef = useRef(false)
+
+  // Get ReactFlow instance for viewport control
+  const { setCenter } = useReactFlow()
+
+  // Detect manual panning and auto-disable follow mode
+  useOnViewportChange({
+    onEnd: useCallback(() => {
+      if (followMode && !isAnimatingRef.current) {
+        setFollowMode(false)
+      }
+    }, [followMode]),
+  })
 
   // Filter actions for selected session, or show all if none selected
   const visibleActions = useMemo(() => {
@@ -349,13 +367,13 @@ function ActionGraphInner({
       }
     }
     return layoutGraph(rawNodes, rawEdges, {
-      direction: 'TB',
+      direction: layoutDirection,
       nodeWidth: 200,
       nodeHeight: 80,
       rankSep: 60,
       nodeSep: 30,
     })
-  }, [rawNodes, rawEdges])
+  }, [rawNodes, rawEdges, layoutDirection])
 
   // Initial nodes with chaser (click handler added later)
   const initialNodes = useMemo(() => {
@@ -457,6 +475,9 @@ function ActionGraphInner({
     const prevPositions = nodePositionsRef.current
     const crab = crabRef.current
 
+    // Track the latest new node for follow mode
+    let latestNewNode: { x: number; y: number } | null = null
+
     // Check for new nodes
     for (const node of layoutedNodes) {
       if (!node.id.includes('crab')) {
@@ -470,7 +491,7 @@ function ActionGraphInner({
           crab.target = { ...nodeCenter, nodeId: node.id }
           crab.state = 'chasing'
           if (timeoutRef.current) clearTimeout(timeoutRef.current)
-          break
+          latestNewNode = nodeCenter
         }
 
         // Existing node moved - if we were tracking it or idle, chase it
@@ -489,8 +510,17 @@ function ActionGraphInner({
       }
     }
 
+    // Follow mode: pan to the latest new node
+    if (followMode && latestNewNode) {
+      isAnimatingRef.current = true
+      setCenter(latestNewNode.x, latestNewNode.y, { zoom: 0.85, duration: 500 })
+      setTimeout(() => {
+        isAnimatingRef.current = false
+      }, 550)
+    }
+
     prevNodeIdsRef.current = currentIds
-  }, [layoutedNodes])
+  }, [layoutedNodes, followMode, setCenter])
 
   // Main animation loop - step-based crab movement at 10fps timing
   useEffect(() => {
@@ -735,15 +765,14 @@ function ActionGraphInner({
   )
 
   return (
-    <SessionsProvider value={sessions}>
-      <div className="w-full h-full bg-shell-950 texture-grid relative">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
+    <div className="w-full h-full bg-shell-950 texture-grid relative">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={onNodeClick}
+        nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
@@ -754,7 +783,32 @@ function ActionGraphInner({
         <Controls
           className="bg-shell-900! border-shell-700! shadow-lg! [&>button]:bg-shell-800! [&>button]:border-shell-700! [&>button]:text-gray-300! [&>button:hover]:bg-shell-700! [&>button>svg]:fill-gray-300!"
         />
-        <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 items-end">
+        <div className="absolute top-2 right-2 z-10 flex gap-1.5">
+          <button
+            onClick={() => setFollowMode((prev) => !prev)}
+            title={followMode ? 'Following new nodes (click to disable)' : 'Follow new nodes'}
+            className={`p-1.5 rounded border shadow-lg cursor-pointer transition-colors ${
+              followMode
+                ? 'bg-neon-cyan/20 border-neon-cyan text-neon-cyan backdrop-blur-lg'
+                : 'bg-shell-800 border-shell-700 text-gray-300 hover:bg-shell-700'
+            }`}
+          >
+            <Crosshair className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => {
+              setLayoutDirection((d) => (d === 'LR' ? 'TB' : 'LR'))
+              pinnedPositions.current.clear()
+            }}
+            title={layoutDirection === 'LR' ? 'Stack sessions vertically' : 'Spread sessions horizontally'}
+            className="p-1.5 rounded bg-shell-800 border border-shell-700 text-gray-300 hover:bg-shell-700 shadow-lg cursor-pointer"
+          >
+            {layoutDirection === 'LR' ? (
+              <ArrowRightLeft className="w-4 h-4" />
+            ) : (
+              <ArrowUpDown className="w-4 h-4" />
+            )}
+          </button>
           <button
             onClick={handleReorganize}
             title="Re-organize layout"
@@ -762,7 +816,6 @@ function ActionGraphInner({
           >
             <LayoutGrid className="w-4 h-4" />
           </button>
-          <Legend />
         </div>
         <MiniMap
           nodeColor={(node) => {
@@ -779,11 +832,10 @@ function ActionGraphInner({
           }}
           maskColor="rgba(10, 10, 15, 0.8)"
           className="bg-shell-900! border-shell-700!"
-          style={{ backgroundColor: '#0a0a0f' }}
+          style={{ backgroundColor: '#0a0a0f', width: 100, height: 75 }}
         />
       </ReactFlow>
-      </div>
-    </SessionsProvider>
+    </div>
   )
 }
 
